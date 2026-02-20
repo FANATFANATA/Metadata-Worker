@@ -7,6 +7,8 @@ import sys
 import time
 import zipfile
 from typing import Optional, Tuple, List
+import tkinter as tk
+from tkinter import filedialog
 
 from tqdm import tqdm
 from colorama import Fore, Style, init as colorama_init
@@ -178,6 +180,33 @@ COMMON_XOR_KEYS = [
 
 def clear_screen():
     os.system("cls" if os.name == "nt" else "clear")
+
+
+def select_file(title: str, filetypes: list) -> str:
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    file_path = filedialog.askopenfilename(title=title, filetypes=filetypes)
+    root.destroy()
+    return file_path
+
+
+def select_save_file(title: str, filetypes: list, defaultextension: str = "") -> str:
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    file_path = filedialog.asksaveasfilename(title=title, filetypes=filetypes, defaultextension=defaultextension)
+    root.destroy()
+    return file_path
+
+
+def select_folder(title: str) -> str:
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    folder_path = filedialog.askdirectory(title=title)
+    root.destroy()
+    return folder_path
 
 
 def loading_animation():
@@ -1040,8 +1069,16 @@ def print_menu():
 def menu_compare():
     clear_screen()
     print(f"\n{Fore.CYAN}=== Compare Metadata Files ==={Style.RESET_ALL}")
-    file1 = input("First file path: ").strip().strip('"')
-    file2 = input("Second file path: ").strip().strip('"')
+    file1 = select_file("Select first metadata file", [("DAT files", "*.dat"), ("All files", "*.*")])
+    if not file1:
+        print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
+        return
+    print(f"First file: {file1}")
+    file2 = select_file("Select second metadata file", [("DAT files", "*.dat"), ("All files", "*.*")])
+    if not file2:
+        print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
+        return
+    print(f"Second file: {file2}")
     bytes_count = input("Bytes to compare (10): ").strip()
     bytes_count = int(bytes_count) if bytes_count else 10
     compare_metadata_files(file1, file2, bytes_count)
@@ -1051,20 +1088,26 @@ def menu_frida():
     clear_screen()
     print(f"\n{Fore.CYAN}=== Generate Frida Script ==={Style.RESET_ALL}")
     offset = input("LoadMetaDataFile offset (e.g., 0x123456): ").strip()
-    output = input("Output file path (frida.js): ").strip() or "frida.js"
+    output = select_save_file("Save Frida script", [("JS files", "*.js"), ("All files", "*.*")], ".js")
+    if not output:
+        output = "frida.js"
     generate_frida_script(offset, output)
 
 
 def menu_extract():
     clear_screen()
     print(f"\n{Fore.CYAN}=== Extract Metadata from libunity.so ==={Style.RESET_ALL}")
-    libunity = input("libunity.so path: ").strip().strip('"')
-    output = input("Output path: ").strip().strip('"')
+    libunity = select_file("Select libunity.so", [("SO files", "*.so"), ("All files", "*.*")])
+    if not libunity:
+        print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
+        return
+    print(f"libunity.so: {libunity}")
+    output = select_save_file("Save metadata", [("DAT files", "*.dat"), ("All files", "*.*")], ".dat")
+    if not output:
+        print(f"{Fore.RED}Error: No output path selected{Style.RESET_ALL}")
+        return
     size = input("Max size (30000000): ").strip()
     size = int(size) if size else 30_000_000
-    if not os.path.isfile(libunity):
-        print(f"{Fore.RED}Error: File not found{Style.RESET_ALL}")
-        return
     metadata, _ = extract_metadata(libunity, size)
     with open(output, "wb") as f:
         f.write(metadata)
@@ -1074,10 +1117,14 @@ def menu_extract():
 def menu_decrypt():
     clear_screen()
     print(f"\n{Fore.CYAN}=== Decrypt Metadata ==={Style.RESET_ALL}")
-    input_file = input("Encrypted metadata path: ").strip().strip('"')
-    output = input("Output path: ").strip().strip('"')
-    if not os.path.isfile(input_file):
-        print(f"{Fore.RED}Error: File not found{Style.RESET_ALL}")
+    input_file = select_file("Select encrypted metadata", [("DAT files", "*.dat"), ("All files", "*.*")])
+    if not input_file:
+        print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
+        return
+    print(f"Input: {input_file}")
+    output = select_save_file("Save decrypted metadata", [("DAT files", "*.dat"), ("All files", "*.*")], ".dat")
+    if not output:
+        print(f"{Fore.RED}Error: No output path selected{Style.RESET_ALL}")
         return
     with open(input_file, "rb") as f:
         metadata = f.read()
@@ -1087,10 +1134,11 @@ def menu_decrypt():
 def menu_info():
     clear_screen()
     print(f"\n{Fore.CYAN}=== Metadata Info ==={Style.RESET_ALL}")
-    input_file = input("Metadata file path: ").strip().strip('"')
-    if not os.path.isfile(input_file):
-        print(f"{Fore.RED}Error: File not found{Style.RESET_ALL}")
+    input_file = select_file("Select metadata file", [("DAT files", "*.dat"), ("All files", "*.*")])
+    if not input_file:
+        print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
         return
+    print(f"File: {input_file}")
     with open(input_file, "rb") as f:
         data = f.read(512)
     print(f"\n{Fore.CYAN}=== Metadata Info ==={Style.RESET_ALL}")
@@ -1108,12 +1156,16 @@ def menu_info():
 def menu_apk():
     clear_screen()
     print(f"\n{Fore.CYAN}=== Extract from APK/Folder ==={Style.RESET_ALL}")
-    input_path = input("APK file or folder path: ").strip().strip('"')
-    output = input("Output path: ").strip().strip('"')
-    force = input("Force extract if encrypted? (y/N): ").strip().lower() == 'y'
-    if not os.path.exists(input_path):
-        print(f"{Fore.RED}Error: Path not found{Style.RESET_ALL}")
+    input_path = select_file("Select APK file", [("APK files", "*.apk"), ("All files", "*.*")])
+    if not input_path:
+        print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
         return
+    print(f"APK: {input_path}")
+    output = select_save_file("Save metadata", [("DAT files", "*.dat"), ("All files", "*.*")], ".dat")
+    if not output:
+        print(f"{Fore.RED}Error: No output path selected{Style.RESET_ALL}")
+        return
+    force = input("Force extract if encrypted? (y/N): ").strip().lower() == 'y'
     extract_from_apk(input_path, output, force)
 
 
@@ -1125,7 +1177,9 @@ def menu_frida_memory_dump():
     print(f"  python dump-metadata.py com.game.package")
     print(f"  python dump-metadata.py com.game.package -o 0x123456")
     print(f"\nRequires: pip install frida")
-    output = input("\nOutput file path (dump-metadata.js): ").strip() or "dump-metadata.js"
+    output = select_save_file("Save Frida memory dump script", [("JS files", "*.js"), ("All files", "*.*")], ".js")
+    if not output:
+        output = "dump-metadata.js"
     generate_frida_memory_dump_script(output)
     py_script = '''
 import argparse
@@ -1175,36 +1229,39 @@ def menu_il2cppdumper():
     clear_screen()
     print(f"\n{Fore.CYAN}=== Run Il2CppDumper ==={Style.RESET_ALL}")
     print(f"{Fore.YELLOW}Requires: Il2CppDumper.exe in the same folder{Style.RESET_ALL}")
-    
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     il2cppdumper_path = os.path.join(script_dir, "Il2CppDumper.exe")
-    
+
     if not os.path.isfile(il2cppdumper_path):
         print(f"{Fore.RED}Error: Il2CppDumper.exe not found at {il2cppdumper_path}{Style.RESET_ALL}")
         print(f"{Fore.CYAN}Download: https://github.com/Perfare/Il2CppDumper/releases{Style.RESET_ALL}")
         return
-    
-    libunity = input("libil2cpp.so path: ").strip().strip('"')
-    metadata = input("global-metadata.dat path: ").strip().strip('"')
-    output = input("Output folder (Il2CppDumper/output): ").strip().strip('"') or os.path.join(script_dir, "Il2CppDumper", "output")
-    
-    if not os.path.isfile(libunity):
-        print(f"{Fore.RED}Error: libil2cpp.so not found{Style.RESET_ALL}")
+
+    libil2cpp = select_file("Select libil2cpp.so", [("SO files", "*.so"), ("All files", "*.*")])
+    if not libil2cpp:
+        print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
         return
-    if not os.path.isfile(metadata):
-        print(f"{Fore.RED}Error: global-metadata.dat not found{Style.RESET_ALL}")
-        return
+    print(f"libil2cpp.so: {libil2cpp}")
     
+    metadata = select_file("Select global-metadata.dat", [("DAT files", "*.dat"), ("All files", "*.*")])
+    if not metadata:
+        print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
+        return
+    print(f"metadata: {metadata}")
+    
+    output = select_folder("Select output folder")
+    if not output:
+        output = os.path.join(script_dir, "Il2CppDumper", "output")
+    print(f"output: {output}")
+
     print(f"\n{Fore.CYAN}Running Il2CppDumper...{Style.RESET_ALL}")
-    print(f"  libil2cpp.so: {libunity}")
-    print(f"  metadata: {metadata}")
-    print(f"  output: {output}")
     
     os.makedirs(os.path.dirname(output), exist_ok=True)
 
     try:
         result = subprocess.run(
-            [il2cppdumper_path, libunity, metadata, os.path.dirname(output)],
+            [il2cppdumper_path, libil2cpp, metadata, os.path.dirname(output)],
             capture_output=True,
             text=True,
             timeout=300
