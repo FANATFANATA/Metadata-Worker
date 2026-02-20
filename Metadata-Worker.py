@@ -698,12 +698,12 @@ def apply_heuristic(
         if not struct_sig:
             continue
 
-        step = struct_sig[1:].count("I") * 4 + struct_sig[1:].count("H") * 2
+        step = struct.calcsize(struct_sig)
         entries = []
         for i in range(0, len(data), step):
             try:
                 fields = struct.unpack_from(struct_sig, data, i)
-                entries.append(fields[0] if len(struct_sig[1:]) == 1 else fields)
+                entries.append(fields[0] if len(struct_sig.rstrip('x')) == 1 else fields)
             except struct.error:
                 break
 
@@ -804,7 +804,7 @@ def decrypt_metadata(metadata: bytes, output_path: str) -> bool:
         ("string", None, None, True, b"Assembly-CSharp\x00\x00\x00\x00\x00Assembl"),
         ("events", events_cb, "<IIIIII", False, None),
         ("properties", token_cb(0x17000000), "<IIIII", False, None),
-        ("methods", token_cb(0x06000000), "<IIIIIIIHHHH", False, None),
+        ("methods", token_cb(0x06000000), "<IIIIIIIHHHHxx", False, None),
         ("parameterDefaultValues", ascending_cb, "<III", True, None),
         ("fieldDefaultValues", ascending_cb, "<III", False, None),
         (
@@ -817,14 +817,14 @@ def decrypt_metadata(metadata: bytes, output_path: str) -> bool:
         ("fieldMarshaledSizes", ascending_cb, "<III", True, None),
         ("parameters", token_cb(0x08000000), "<III", True, None),
         ("fields", token_cb(0x04000000), "<III", True, None),
-        ("genericParameters", None, "<IIHHHH", True, None),
+        ("genericParameters", None, "<IIHHHHxx", True, None),
         ("genericParameterContraints", None, "<I", True, None),
         ("genericContainers", None, "<IIII", False, None),
         ("nestedTypes", None, "<I", False, None),
         ("interfaces", None, "<I", False, None),
         ("vtableMethods", None, "<I", False, None),
         ("interfaceOffsets", None, "<II", False, None),
-        ("typeDefinitions", None, "<IIIIIIIIIIIIIIIIHHHHHHHHII", False, None),
+        ("typeDefinitions", None, "<IIIIIIIIIIIIIIIIHHHHHHHHxxII", False, None),
         ("images", None, "<IIIIIIIIII", False, None),
         ("assemblies", token_cb(0x20000000), "<IIIIIIIIIIIIIIII", False, None),
         ("fieldRefs", None, "<II", False, None),
