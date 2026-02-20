@@ -163,12 +163,7 @@ SUPPORTED_VERSIONS = {
     40: "Unity 2025.1 (experimental)",
     41: "Unity 2025.2 (experimental)",
     42: "Unity 2025.3 (experimental)",
-    43: "Unity 2025.4 (experimental)",
-    44: "Unity 2026 (experimental)",
-    45: "Unity 2026.1 (experimental)",
-    46: "Unity 2026.2 (experimental)",
-    47: "Unity 2026.3 (experimental)",
-    48: "Unity 2027 (experimental)",
+    43: "Unity 2026+ (experimental)",
 }
 
 COMMON_XOR_KEYS = [
@@ -759,7 +754,7 @@ def decrypt_metadata(metadata: bytes, output_path: str) -> bool:
     version, desc = get_metadata_version(metadata)
     print(f"{Fore.CYAN}Metadata version: {version} ({desc}){Style.RESET_ALL}")
 
-    if version < 15 or version > 48:
+    if version < 15 or version > 43:
         print(f"{Fore.YELLOW}Warning: Unknown metadata version {version}{Style.RESET_ALL}")
     elif version > 38:
         print(f"{Fore.YELLOW}Warning: Version {version} may have limited support{Style.RESET_ALL}")
