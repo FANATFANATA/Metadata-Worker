@@ -7,8 +7,14 @@ import sys
 import time
 import zipfile
 from typing import Optional, Tuple, List
-import tkinter as tk
-from tkinter import filedialog
+from pathlib import Path
+
+try:
+    import tkinter as tk
+    from tkinter import filedialog
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
 
 from tqdm import tqdm
 from colorama import Fore, Style, init as colorama_init
@@ -182,35 +188,104 @@ COMMON_XOR_KEYS = [
 ]
 
 
+def validate_path(path: str, must_exist: bool = True) -> Optional[str]:
+    try:
+        p = Path(path).resolve()
+        if must_exist and not p.exists():
+            return None
+        return str(p)
+    except (ValueError, OSError):
+        return None
+
+
 def clear_screen():
     os.system("cls" if os.name == "nt" else "clear")
 
 
+def select_file_cli(title: str, filetypes: list) -> str:
+    print(f"{Fore.CYAN}{title}{Style.RESET_ALL}")
+    while True:
+        path = input("Путь к файлу (или 'q' для отмены): ").strip()
+        if path.lower() == 'q':
+            return ""
+        if os.path.isfile(path):
+            return path
+        print(f"{Fore.RED}Файл не найден, попробуйте снова{Style.RESET_ALL}")
+
+
+def select_save_file_cli(title: str, filetypes: list, defaultextension: str = "") -> str:
+    print(f"{Fore.CYAN}{title}{Style.RESET_ALL}")
+    while True:
+        path = input("Путь для сохранения (или 'q' для отмены): ").strip()
+        if path.lower() == 'q':
+            return ""
+        if path:
+            if defaultextension and not path.endswith(defaultextension):
+                path += defaultextension
+            return path
+        print(f"{Fore.RED}Введите путь{Style.RESET_ALL}")
+
+
+def select_folder_cli(title: str) -> str:
+    print(f"{Fore.CYAN}{title}{Style.RESET_ALL}")
+    while True:
+        path = input("Путь к папке (или 'q' для отмены): ").strip()
+        if path.lower() == 'q':
+            return ""
+        if os.path.isdir(path):
+            return path
+        print(f"{Fore.RED}Папка не найдена, попробуйте снова{Style.RESET_ALL}")
+
+
 def select_file(title: str, filetypes: list) -> str:
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    file_path = filedialog.askopenfilename(title=title, filetypes=filetypes)
-    root.destroy()
-    return file_path
+    if TKINTER_AVAILABLE:
+        root = None
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            file_path = filedialog.askopenfilename(title=title, filetypes=filetypes)
+            return file_path
+        except tk.TclError:
+            pass
+        finally:
+            if root:
+                root.destroy()
+    return select_file_cli(title, filetypes)
 
 
 def select_save_file(title: str, filetypes: list, defaultextension: str = "") -> str:
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    file_path = filedialog.asksaveasfilename(title=title, filetypes=filetypes, defaultextension=defaultextension)
-    root.destroy()
-    return file_path
+    if TKINTER_AVAILABLE:
+        root = None
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            file_path = filedialog.asksaveasfilename(title=title, filetypes=filetypes, defaultextension=defaultextension)
+            return file_path
+        except tk.TclError:
+            pass
+        finally:
+            if root:
+                root.destroy()
+    return select_save_file_cli(title, filetypes, defaultextension)
 
 
 def select_folder(title: str) -> str:
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    folder_path = filedialog.askdirectory(title=title)
-    root.destroy()
-    return folder_path
+    if TKINTER_AVAILABLE:
+        root = None
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            folder_path = filedialog.askdirectory(title=title)
+            return folder_path
+        except tk.TclError:
+            pass
+        finally:
+            if root:
+                root.destroy()
+    return select_folder_cli(title)
 
 
 def loading_animation():
@@ -222,6 +297,8 @@ def loading_animation():
 
 
 def is_valid_metadata(data: bytes) -> bool:
+    if len(data) < 4:
+        return False
     return data[:4] == METADATA_MAGIC
 
 
@@ -242,18 +319,23 @@ def decrypt_xor(data: bytes, key: List[int]) -> bytes:
 
 
 def decrypt_xxtea(data: bytes, key: bytes) -> bytes:
+    if len(key) < 4:
+        return data
     sum_val, delta = 0x00000000, 0x9E3779B9
     if len(data) % 4 != 0 or len(data) // 4 < 2:
         return data
     out = bytearray(data)
+    key_idx = len(key) // 4
+    if key_idx < 1:
+        return data
     for i in range(0, len(out), 8):
         if i + 8 > len(out):
             break
         v = list(struct.unpack_from("<II", out, i))
         sum_val = (delta * 32) & 0xFFFFFFFF
         for _ in range(32):
-            v[1] = (v[1] - (((v[0] << 4) + v[0]) ^ (v[0] + sum_val) ^ ((v[0] >> 5) + key[(sum_val >> 11) & 3]))) & 0xFFFFFFFF
-            v[0] = (v[0] - (((v[1] << 4) + v[1]) ^ (v[1] + sum_val) ^ ((v[1] >> 5) + key[sum_val & 3]))) & 0xFFFFFFFF
+            v[1] = (v[1] - (((v[0] << 4) + v[0]) ^ (v[0] + sum_val) ^ ((v[0] >> 5) + key[(sum_val >> 11) & (key_idx - 1)]))) & 0xFFFFFFFF
+            v[0] = (v[0] - (((v[1] << 4) + v[1]) ^ (v[1] + sum_val) ^ ((v[1] >> 5) + key[sum_val & (key_idx - 1)]))) & 0xFFFFFFFF
             sum_val = (sum_val - delta) & 0xFFFFFFFF
         struct.pack_into("<II", out, i, v[0], v[1])
     return bytes(out)
@@ -284,7 +366,12 @@ def auto_find_xor_key(data: bytes) -> Optional[List[int]]:
             if i + len(target) > len(data):
                 continue
             key = [data[i + j] ^ target[j] for j in range(len(target))]
-            if all(data[i + j] ^ target[j] == key[j % klen] for j in range(len(target))):
+            valid = True
+            for j in range(klen):
+                if key[j] != key[j % klen]:
+                    valid = False
+                    break
+            if valid:
                 return list(dict.fromkeys(key))[:klen]
     return None
 
@@ -329,17 +416,20 @@ def try_decrypt_metadata(data: bytes) -> Tuple[bytes, Optional[str]]:
     key = auto_header_xor_key(data)
     if key:
         decrypted = decrypt_xor(data, key)
-        return decrypted, f"HEADER-XOR:{key}"
+        if is_valid_metadata(decrypted):
+            return decrypted, f"HEADER-XOR:{key}"
 
     key = auto_wanzg_key(data)
     if key:
         decrypted = decrypt_xor(data, key)
-        return decrypted, f"WANZG:{key}"
+        if is_valid_metadata(decrypted):
+            return decrypted, f"WANZG:{key}"
 
     key = auto_find_xor_key(data)
     if key:
         decrypted = decrypt_xor(data, key)
-        return decrypted, f"AUTO-XOR:{key}"
+        if is_valid_metadata(decrypted):
+            return decrypted, f"AUTO-XOR:{key}"
 
     decrypted = decrypt_striped_xor(data)
     if is_valid_metadata(decrypted):
@@ -472,7 +562,9 @@ def find_metadata_in_folder(folder_path: str) -> Optional[Tuple[str, int]]:
             print(f"{Fore.GREEN}Found metadata in folder: {path} ({size} bytes){Style.RESET_ALL}")
             return path, size
 
-    for root, dirs, files in os.walk(folder_path):
+    for depth, (root, dirs, files) in enumerate(os.walk(folder_path)):
+        if depth > 5:
+            break
         for file in files:
             if "metadata" in file.lower() and file.endswith(".dat"):
                 path = os.path.join(root, file)
@@ -649,7 +741,8 @@ def extract_metadata(libunity_path: str, size: int = 30_000_000) -> Tuple[bytes,
 
     if index != -1:
         index += (4 - index % 4) % 4
-        metadata = metadata[:index]
+        if index > 0 and index <= len(metadata):
+            metadata = metadata[:index]
         print(f"{Fore.GREEN}Metadata end marker found ({'64-bit' if is64bit else '32-bit'}).{Style.RESET_ALL}")
     else:
         print(f"{Fore.RED}Warning: End marker not found, using full dump.{Style.RESET_ALL}")
@@ -713,7 +806,6 @@ def apply_heuristic(
         data = metadata[offset:offset+size]
         if marker and marker in data:
             found.append((offset, size, data))
-            remaining.remove((offset, size))
             break
 
         if not struct_sig:
@@ -737,7 +829,8 @@ def apply_heuristic(
 
     found.sort(key=lambda x: x[1], reverse=not prefer_lowest)
     result = found[0]
-    remaining.remove(result[:2])
+    if result[:2] in remaining:
+        remaining.remove(result[:2])
     print(f"{Fore.CYAN}Found {name} at offset {result[0]}{Style.RESET_ALL}")
     return result, remaining
 
@@ -759,9 +852,11 @@ def decrypt_metadata(metadata: bytes, output_path: str) -> bool:
     elif version > 38:
         print(f"{Fore.YELLOW}Warning: Version {version} may have limited support{Style.RESET_ALL}")
 
-    with open("debug-metadata.bin", "wb") as f:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    debug_path = os.path.join(script_dir, "debug-metadata.bin")
+    with open(debug_path, "wb") as f:
         f.write(metadata)
-    print(f"{Fore.CYAN}Debug dump saved to debug-metadata.bin{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}Debug dump saved to {debug_path}{Style.RESET_ALL}")
 
     offset_candidates = find_offset_candidates(metadata)
     print(
@@ -1183,11 +1278,15 @@ def menu_info():
 def menu_apk():
     clear_screen()
     print(f"\n{Fore.CYAN}=== Extract from APK/Folder ==={Style.RESET_ALL}")
-    input_path = select_file("Select APK file", [("APK files", "*.apk"), ("All files", "*.*")])
+    print(f"{Fore.YELLOW}Select APK file or unpacked folder{Style.RESET_ALL}")
+    input_path = select_file("Select APK file or folder", [("APK files", "*.apk"), ("All files", "*.*")])
     if not input_path:
         print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
         return
-    print(f"APK: {input_path}")
+    if os.path.isdir(input_path):
+        print(f"Folder: {input_path}")
+    else:
+        print(f"APK: {input_path}")
     output = select_save_file("Save metadata", [("DAT files", "*.dat"), ("All files", "*.*")], ".dat")
     if not output:
         print(f"{Fore.RED}Error: No output path selected{Style.RESET_ALL}")
@@ -1211,8 +1310,7 @@ def menu_frida_memory_dump():
     if not output:
         output = "dump-metadata.js"
     generate_frida_memory_dump_script(output)
-    py_script = '''
-import argparse
+    py_script = '''import argparse
 import frida
 import sys
 import os
@@ -1232,7 +1330,7 @@ def main():
     device = frida.get_usb_device()
     session = device.attach(args.package_name)
 
-    script_path = os.path.join(os.path.dirname(__file__), 'dump-metadata.js')
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dump-metadata.js')
     with open(script_path, 'r') as f:
         script_content = f.read()
 
@@ -1273,25 +1371,25 @@ def menu_il2cppdumper():
         print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
         return
     print(f"libil2cpp.so: {libil2cpp}")
-    
+
     metadata = select_file("Select global-metadata.dat", [("DAT files", "*.dat"), ("All files", "*.*")])
     if not metadata:
         print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
         return
     print(f"metadata: {metadata}")
-    
+
     output = select_folder("Select output folder")
     if not output:
         output = os.path.join(script_dir, "Il2CppDumper", "output")
     print(f"output: {output}")
 
     print(f"\n{Fore.CYAN}Running Il2CppDumper...{Style.RESET_ALL}")
-    
-    os.makedirs(os.path.dirname(output), exist_ok=True)
+
+    os.makedirs(output, exist_ok=True)
 
     try:
         result = subprocess.run(
-            [il2cppdumper_path, libil2cpp, metadata, os.path.dirname(output)],
+            [il2cppdumper_path, libil2cpp, metadata, output],
             capture_output=True,
             text=True,
             timeout=300
