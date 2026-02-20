@@ -1,14 +1,14 @@
 # Metadata-Worker
-
 **IL2CPP Metadata Tool - Compare, Extract, Decrypt, Dump APK**
-
 A comprehensive Python tool for working with Unity IL2CPP global-metadata.dat files. Supports 20+ decryption methods and metadata versions 15-42 (Unity 2015-2025.x).
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
-Dev Telegram: DanyaVoredom.t.me
----
+
+## Contacts
+
+Telegram: @DanyaVoredom https://DanyaVoredom.t.me
 
 ## Features
 
