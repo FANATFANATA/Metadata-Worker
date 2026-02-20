@@ -175,6 +175,9 @@ COMMON_XOR_KEYS = [
     [0x00, 0x00, 0x00, 0x00],
     [0x12, 0x34, 0x56, 0x78],
     [0xDE, 0xAD, 0xBE, 0xEF],
+    [0xE6, 0x68, 0xE9, 0x05],
+    [0xE6, 0x68, 0xE9, 0x05, 0xBC, 0xA7, 0x4E, 0xDB],
+    [0x49, 0x73, 0x58, 0xFF],
 ]
 
 
@@ -285,6 +288,18 @@ def auto_find_xor_key(data: bytes) -> Optional[List[int]]:
     return None
 
 
+def auto_header_xor_key(data: bytes) -> Optional[List[int]]:
+    if len(data) < 8:
+        return None
+    expected_magic = METADATA_MAGIC
+    key = [data[i] ^ expected_magic[i] for i in range(4)]
+    if all(k != 0 for k in key):
+        test_decrypt = decrypt_xor(data[:16], key)
+        if test_decrypt[:4] == METADATA_MAGIC:
+            return key
+    return None
+
+
 def auto_wanzg_key(data: bytes) -> Optional[List[int]]:
     if len(data) < 0x120:
         return None
@@ -309,6 +324,11 @@ def decrypt_striped_xor(data: bytes, key: int = 0xA3, stripe: int = 0x1000) -> b
 def try_decrypt_metadata(data: bytes) -> Tuple[bytes, Optional[str]]:
     if is_valid_metadata(data):
         return data, None
+
+    key = auto_header_xor_key(data)
+    if key:
+        decrypted = decrypt_xor(data, key)
+        return decrypted, f"HEADER-XOR:{key}"
 
     key = auto_wanzg_key(data)
     if key:
