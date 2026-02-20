@@ -2,15 +2,17 @@ import argparse
 import collections
 import os
 import struct
+import subprocess
 import sys
 import time
+import zipfile
 from typing import Optional, Tuple, List
 
 from tqdm import tqdm
-from colorama import Fore, Style, init
+from colorama import Fore, Style, init as colorama_init
 from elftools.elf.elffile import ELFFile
 
-init(autoreset=False)
+colorama_init(autoreset=True)
 
 BANNER = """
    .=-.-.                   _,.---._      .-._            .=-.-.    ,---.
@@ -128,7 +130,6 @@ METADATA_MAGIC = b"\xaf\x1b\xb1\xfa"
 METADATA_MARKER_64 = b"\x15\x00\x0c\x0c\x10\x1b\x23\x00\x00\x00\x00\x00\x28\x00\x2c\x10"
 METADATA_MARKER_32 = b"\x00\x01\x01\x02\x01\x02\x02\x03"
 METADATA_SIGNATURE = b"\x02\x00\x00\x00\x7c\x00\x00\x06\x0b\x00\x00\x00\x02\x00\x00\x00"
-METADATA_HEADER_SIZE = 0x110
 METADATA_HEADER_MAGIC = b"\xaf\x1b\xb1\xfa\x1f\x00\x00\x00\x00\x01\x00\x00"
 
 SUPPORTED_VERSIONS = {
@@ -209,8 +210,7 @@ def decrypt_xor(data: bytes, key: List[int]) -> bytes:
 
 def decrypt_xxtea(data: bytes, key: bytes) -> bytes:
     sum_val, delta = 0x00000000, 0x9E3779B9
-    n = len(data) // 4
-    if len(data) % 4 != 0 or n < 2:
+    if len(data) % 4 != 0 or len(data) // 4 < 2:
         return data
     out = bytearray(data)
     for i in range(0, len(out), 8):
@@ -394,8 +394,6 @@ def find_metadata_in_libunity(libunity_path: str) -> Optional[int]:
 
 
 def find_metadata_in_apk(apk_path: str) -> Optional[Tuple[str, int]]:
-    import zipfile
-
     try:
         with zipfile.ZipFile(apk_path, "r") as apk:
             for name in apk.namelist():
@@ -436,8 +434,6 @@ def find_metadata_in_folder(folder_path: str) -> Optional[Tuple[str, int]]:
 
 
 def extract_from_apk(input_path: str, output_path: str, force: bool = False) -> bool:
-    import zipfile
-
     is_folder = os.path.isdir(input_path)
     is_apk = os.path.isfile(input_path) and input_path.lower().endswith(".apk")
 
@@ -481,10 +477,7 @@ def map_vaddr_to_offset(va: int, load_segments: List[Tuple[int, int, int]]) -> i
     for start, end, offset in load_segments:
         if start <= va < end:
             return va - start + offset
-    print(
-        f"{Fore.RED}Error: Virtual address {hex(va)} not found in LOAD segments.{Style.RESET_ALL}"
-    )
-    sys.exit(1)
+    raise ValueError(f"Virtual address {hex(va)} not found in LOAD segments")
 
 
 def extract_metadata_pointer(libunity_path: str) -> int:
@@ -522,7 +515,10 @@ def extract_metadata_pointer(libunity_path: str) -> int:
                 if is64bit:
                     pointer = relocation["r_addend"]
                 else:
-                    offset = map_vaddr_to_offset(addr, load_segments)
+                    try:
+                        offset = map_vaddr_to_offset(addr, load_segments)
+                    except ValueError:
+                        continue
                     libunity.seek(offset)
                     pointer = struct.unpack("<I", libunity.read(4))[0]
                 if pointer != 0:
@@ -944,7 +940,6 @@ def main():
             sys.exit(1)
         output = args.output or os.path.join(script_dir, "Il2CppDumper", "output")
         os.makedirs(os.path.dirname(output), exist_ok=True)
-        import subprocess
         try:
             result = subprocess.run(
                 [il2cppdumper_path, args.libil2cpp, args.metadata, os.path.dirname(output)],
@@ -1182,8 +1177,7 @@ def menu_il2cppdumper():
     print(f"  output: {output}")
     
     os.makedirs(os.path.dirname(output), exist_ok=True)
-    
-    import subprocess
+
     try:
         result = subprocess.run(
             [il2cppdumper_path, libunity, metadata, os.path.dirname(output)],
@@ -1207,36 +1201,6 @@ def menu_il2cppdumper():
         print(f"{Fore.RED}Error: Il2CppDumper.exe not found{Style.RESET_ALL}")
     except Exception as e:
         print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
-
-
-def interactive_menu():
-    while True:
-        print_menu()
-        choice = input(f"{Fore.CYAN}Select option{Style.RESET_ALL}: ").strip()
-        
-        if choice == "1":
-            menu_compare()
-        elif choice == "2":
-            menu_frida()
-        elif choice == "3":
-            menu_extract()
-        elif choice == "4":
-            menu_decrypt()
-        elif choice == "5":
-            menu_info()
-        elif choice == "6":
-            menu_apk()
-        elif choice == "7":
-            menu_frida_memory_dump()
-        elif choice == "8":
-            menu_il2cppdumper()
-        elif choice == "0":
-            print(f"{Fore.GREEN}Exiting...{Style.RESET_ALL}")
-            break
-        else:
-            print(f"{Fore.RED}Invalid option{Style.RESET_ALL}")
-
-        input(f"\n{Fore.CYAN}Press Enter to continue...{Style.RESET_ALL}")
 
 
 if __name__ == "__main__":
