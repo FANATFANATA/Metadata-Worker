@@ -514,6 +514,8 @@ def extract_metadata_pointer(libunity_path: str) -> int:
                     continue
                 if is64bit:
                     pointer = relocation["r_addend"]
+                    if pointer != 0:
+                        relocations.append(pointer)
                 else:
                     try:
                         offset = map_vaddr_to_offset(addr, load_segments)
@@ -521,28 +523,50 @@ def extract_metadata_pointer(libunity_path: str) -> int:
                         continue
                     libunity.seek(offset)
                     pointer = struct.unpack("<I", libunity.read(4))[0]
-                if pointer != 0:
-                    relocations.append(pointer)
+                    if pointer != 0:
+                        relocations.append(pointer)
 
         print(f"{Fore.CYAN}Searching for metadata pointer...{Style.RESET_ALL}")
         candidates = []
         libunity.seek(0)
         for addr in tqdm(relocations, colour="green", unit="rel", leave=False):
-            libunity.seek(addr - 16)
-            if libunity.read(16) == METADATA_SIGNATURE:
-                candidates.append(addr)
+            try:
+                libunity.seek(addr - 16)
+                data = libunity.read(16)
+                if data == METADATA_SIGNATURE:
+                    candidates.append(addr)
+            except Exception:
+                continue
 
     if not candidates:
-        print(
-            f"{Fore.RED + Style.BRIGHT}Error: No metadata pointer found.{Style.RESET_ALL}"
-        )
-        sys.exit(1)
+        print(f"{Fore.YELLOW}Warning: No metadata pointer found via relocations, trying alternative method...{Style.RESET_ALL}")
+        return extract_metadata_pointer_alternative(libunity_path)
     elif len(candidates) > 1:
         print(
             f"{Fore.YELLOW}Multiple candidates found, using first: {hex(candidates[0])}{Style.RESET_ALL}"
         )
 
     return candidates[0]
+
+
+def extract_metadata_pointer_alternative(libunity_path: str) -> int:
+    with open(libunity_path, "rb") as f:
+        data = f.read()
+    
+    print(f"{Fore.CYAN}Scanning for metadata magic bytes...{Style.RESET_ALL}")
+    idx = data.find(METADATA_MAGIC)
+    if idx != -1:
+        print(f"{Fore.GREEN}Found metadata at offset: {hex(idx)}{Style.RESET_ALL}")
+        return idx
+    
+    print(f"{Fore.CYAN}Scanning for metadata signature...{Style.RESET_ALL}")
+    idx = data.find(METADATA_SIGNATURE)
+    if idx != -1:
+        print(f"{Fore.GREEN}Found metadata signature at offset: {hex(idx)}{Style.RESET_ALL}")
+        return idx + 16
+    
+    print(f"{Fore.RED}Error: No metadata found in libunity.so{Style.RESET_ALL}")
+    sys.exit(1)
 
 
 def extract_metadata(libunity_path: str, size: int = 30_000_000) -> Tuple[bytes, bool]:
