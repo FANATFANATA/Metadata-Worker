@@ -163,6 +163,12 @@ SUPPORTED_VERSIONS = {
     40: "Unity 2025.1 (experimental)",
     41: "Unity 2025.2 (experimental)",
     42: "Unity 2025.3 (experimental)",
+    43: "Unity 2025.4 (experimental)",
+    44: "Unity 2026 (experimental)",
+    45: "Unity 2026.1 (experimental)",
+    46: "Unity 2026.2 (experimental)",
+    47: "Unity 2026.3 (experimental)",
+    48: "Unity 2027 (experimental)",
 }
 
 COMMON_XOR_KEYS = [
@@ -723,7 +729,7 @@ def apply_heuristic(
         for i in range(0, len(data), step):
             try:
                 fields = struct.unpack_from(struct_sig, data, i)
-                entries.append(fields[0] if len(struct_sig.rstrip('x')) == 1 else fields)
+                entries.append(fields[0] if len(struct_sig.rstrip('x')) <= 1 else fields)
             except struct.error:
                 break
 
@@ -753,9 +759,9 @@ def decrypt_metadata(metadata: bytes, output_path: str) -> bool:
     version, desc = get_metadata_version(metadata)
     print(f"{Fore.CYAN}Metadata version: {version} ({desc}){Style.RESET_ALL}")
 
-    if version < 15 or version > 39:
+    if version < 15 or version > 48:
         print(f"{Fore.YELLOW}Warning: Unknown metadata version {version}{Style.RESET_ALL}")
-    elif version > 32:
+    elif version > 38:
         print(f"{Fore.YELLOW}Warning: Version {version} may have limited support{Style.RESET_ALL}")
 
     with open("debug-metadata.bin", "wb") as f:
@@ -1146,9 +1152,12 @@ def menu_decrypt():
     if not output:
         print(f"{Fore.RED}Error: No output path selected{Style.RESET_ALL}")
         return
-    with open(input_file, "rb") as f:
-        metadata = f.read()
-    decrypt_metadata(metadata, output)
+    try:
+        with open(input_file, "rb") as f:
+            metadata = f.read()
+        decrypt_metadata(metadata, output)
+    except Exception as e:
+        print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
 
 
 def menu_info():
@@ -1159,18 +1168,21 @@ def menu_info():
         print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
         return
     print(f"File: {input_file}")
-    with open(input_file, "rb") as f:
-        data = f.read(512)
-    print(f"\n{Fore.CYAN}=== Metadata Info ==={Style.RESET_ALL}")
-    print(f"Magic: {data[:4].hex().upper()}")
-    version, desc = get_metadata_version(data)
-    print(f"Version: {version} ({desc})")
-    print(f"File size: {os.path.getsize(input_file)} bytes")
-    if data[:4] != METADATA_MAGIC:
-        print(f"{Fore.YELLOW}Warning: Invalid magic bytes - file may be encrypted{Style.RESET_ALL}")
-        decrypted, key = try_decrypt_metadata(data)
-        if key:
-            print(f"{Fore.GREEN}Possible encryption key: {key}{Style.RESET_ALL}")
+    try:
+        with open(input_file, "rb") as f:
+            data = f.read(512)
+        print(f"\n{Fore.CYAN}=== Metadata Info ==={Style.RESET_ALL}")
+        print(f"Magic: {data[:4].hex().upper()}")
+        version, desc = get_metadata_version(data)
+        print(f"Version: {version} ({desc})")
+        print(f"File size: {os.path.getsize(input_file)} bytes")
+        if data[:4] != METADATA_MAGIC:
+            print(f"{Fore.YELLOW}Warning: Invalid magic bytes - file may be encrypted{Style.RESET_ALL}")
+            decrypted, key = try_decrypt_metadata(data)
+            if key:
+                print(f"{Fore.GREEN}Possible encryption key: {key}{Style.RESET_ALL}")
+    except Exception as e:
+        print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
 
 
 def menu_apk():
@@ -1186,7 +1198,10 @@ def menu_apk():
         print(f"{Fore.RED}Error: No output path selected{Style.RESET_ALL}")
         return
     force = input("Force extract if encrypted? (y/N): ").strip().lower() == 'y'
-    extract_from_apk(input_path, output, force)
+    try:
+        extract_from_apk(input_path, output, force)
+    except Exception as e:
+        print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
 
 
 def menu_frida_memory_dump():
