@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 import zipfile
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Callable, Any
 from pathlib import Path
 
 try:
@@ -94,7 +94,7 @@ function dumpMetadata(ptr, size, packageName) {{
 rpc.exports = {{
     start: function(offset, size, pattern, packageName) {{
         console.log('[*] Starting metadata dump...');
-        
+
         if (offset) {{
             const func = Module.getBaseAddress('libil2cpp.so').add(offset);
             try {{
@@ -201,7 +201,7 @@ def clear_screen():
     os.system("cls" if os.name == "nt" else "clear")
 
 
-def select_file_cli(title: str, filetypes: list) -> str:
+def select_file_cli(title: str) -> str:
     print(f"{Fore.CYAN}{title}{Style.RESET_ALL}")
     while True:
         path = input(i18n.get("path_to_file")).strip()
@@ -212,7 +212,7 @@ def select_file_cli(title: str, filetypes: list) -> str:
         print(f"{Fore.RED}{i18n.get('file_not_found')}{Style.RESET_ALL}")
 
 
-def select_save_file_cli(title: str, filetypes: list, defaultextension: str = "") -> str:
+def select_save_file_cli(title: str, defaultextension: str = "") -> str:
     print(f"{Fore.CYAN}{title}{Style.RESET_ALL}")
     while True:
         path = input(i18n.get("path_to_save")).strip()
@@ -250,7 +250,7 @@ def select_file(title: str, filetypes: list) -> str:
         finally:
             if root:
                 root.destroy()
-    return select_file_cli(title, filetypes)
+    return select_file_cli(title)
 
 
 def select_save_file(title: str, filetypes: list, defaultextension: str = "") -> str:
@@ -267,7 +267,7 @@ def select_save_file(title: str, filetypes: list, defaultextension: str = "") ->
         finally:
             if root:
                 root.destroy()
-    return select_save_file_cli(title, filetypes, defaultextension)
+    return select_save_file_cli(title, defaultextension)
 
 
 def select_folder(title: str) -> str:
@@ -621,7 +621,7 @@ def map_vaddr_to_offset(va: int, load_segments: List[Tuple[int, int, int]]) -> i
     raise ValueError(f"Virtual address {hex(va)} not found in LOAD segments")
 
 
-def extract_metadata_pointer(libunity_path: str) -> int:
+def extract_metadata_pointer(libunity_path: str) -> Optional[int]:
     with open(libunity_path, "rb") as libunity:
         elf = ELFFile(libunity)
         is64bit = elf.get_machine_arch() == "AArch64"
@@ -635,7 +635,7 @@ def extract_metadata_pointer(libunity_path: str) -> int:
         data_section = elf.get_section_by_name(".data")
         if not data_section:
             print(f"{Fore.RED}Error: .data section not found.{Style.RESET_ALL}")
-            sys.exit(1)
+            return None
 
         print(f"{Fore.CYAN}Collecting relocations...{Style.RESET_ALL}")
         relocations = []
@@ -690,27 +690,27 @@ def extract_metadata_pointer(libunity_path: str) -> int:
     return candidates[0]
 
 
-def extract_metadata_pointer_alternative(libunity_path: str) -> int:
+def extract_metadata_pointer_alternative(libunity_path: str) -> Optional[int]:
     with open(libunity_path, "rb") as f:
         data = f.read()
-    
+
     print(f"{Fore.CYAN}Scanning for metadata magic bytes...{Style.RESET_ALL}")
     idx = data.find(METADATA_MAGIC)
     if idx != -1:
         print(f"{Fore.GREEN}Found metadata at offset: {hex(idx)}{Style.RESET_ALL}")
         return idx
-    
+
     print(f"{Fore.CYAN}Scanning for metadata signature...{Style.RESET_ALL}")
     idx = data.find(METADATA_SIGNATURE)
     if idx != -1:
         print(f"{Fore.GREEN}Found metadata signature at offset: {hex(idx)}{Style.RESET_ALL}")
         return idx + 16
-    
+
     print(f"{Fore.RED}Error: No metadata found in libunity.so{Style.RESET_ALL}")
-    sys.exit(1)
+    return None
 
 
-def extract_metadata(libunity_path: str, size: int = 30_000_000) -> Tuple[bytes, bool]:
+def extract_metadata(libunity_path: str, size: int = 30_000_000) -> Optional[Tuple[bytes, bool]]:
     embedded_offset = find_metadata_in_libunity(libunity_path)
     if embedded_offset is not None:
         with open(libunity_path, "rb") as f:
@@ -724,6 +724,9 @@ def extract_metadata(libunity_path: str, size: int = 30_000_000) -> Tuple[bytes,
         return metadata, True
 
     metadataptr = extract_metadata_pointer(libunity_path)
+    if metadataptr is None:
+        return None
+        
     with open(libunity_path, "rb") as libunity:
         libunity.seek(metadataptr)
         metadata = libunity.read(size)
@@ -793,7 +796,7 @@ def apply_heuristic(
     name: str,
     offsets_to_sizes: List[Tuple[int, int]],
     metadata: bytes,
-    callback,
+    callback: Optional[Callable[[List[Any]], bool]],
     struct_sig: Optional[str],
     prefer_lowest: bool,
     marker: Optional[bytes],
@@ -995,181 +998,6 @@ def decrypt_metadata(metadata: bytes, output_path: str) -> bool:
     return True
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        prog="Metadata-Worker",
-        description="IL2CPP Metadata Tool - Compare, Extract, Decrypt, Dump APK",
-    )
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
-
-    compare_parser = subparsers.add_parser("compare", help="Compare two metadata files")
-    compare_parser.add_argument("file1", help="First metadata file")
-    compare_parser.add_argument("file2", help="Second metadata file")
-    compare_parser.add_argument(
-        "-b", "--bytes", type=int, default=10, help="Bytes to compare"
-    )
-
-    frida_parser = subparsers.add_parser("frida", help="Generate Frida script")
-    frida_parser.add_argument("offset", help="LoadMetaDataFile offset (e.g., 0x123456)")
-    frida_parser.add_argument("-o", "--output", help="Output file path")
-
-    extract_parser = subparsers.add_parser(
-        "extract", help="Extract metadata from libunity.so"
-    )
-    extract_parser.add_argument("libunity", help="Path to libunity.so")
-    extract_parser.add_argument("-o", "--output", required=True, help="Output path")
-    extract_parser.add_argument(
-        "-s", "--size", type=int, default=30_000_000, help="Max extraction size"
-    )
-
-    decrypt_parser = subparsers.add_parser("decrypt", help="Decrypt extracted metadata")
-    decrypt_parser.add_argument("input", help="Path to encrypted metadata")
-    decrypt_parser.add_argument("-o", "--output", required=True, help="Output path")
-
-    info_parser = subparsers.add_parser("info", help="Show metadata info")
-    info_parser.add_argument("input", help="Path to metadata file")
-
-    apk_parser = subparsers.add_parser("apk", help="Extract metadata from APK or unpacked APK folder")
-    apk_parser.add_argument("input", help="Path to APK file or unpacked APK folder")
-    apk_parser.add_argument("-o", "--output", required=True, help="Output path")
-    apk_parser.add_argument("-f", "--force", action="store_true", help="Force extract even if metadata looks encrypted")
-
-    memory_dump_parser = subparsers.add_parser("memory-dump", help="Generate Frida memory dump script (CameroonD style)")
-    memory_dump_parser.add_argument("-o", "--output", help="Output file path")
-
-    il2cppdumper_parser = subparsers.add_parser("il2cppdumper", help="Run Il2CppDumper.exe (requires libil2cpp.so + metadata)")
-    il2cppdumper_parser.add_argument("libil2cpp", help="Path to libil2cpp.so")
-    il2cppdumper_parser.add_argument("metadata", help="Path to global-metadata.dat")
-    il2cppdumper_parser.add_argument("-o", "--output", help="Output folder path")
-
-    menu_parser = subparsers.add_parser("menu", help="Interactive menu mode")
-
-    args = parser.parse_args()
-
-    if args.command and args.command != "menu":
-        print(Fore.CYAN + BANNER + Style.RESET_ALL)
-        loading_animation()
-
-    if args.command == "compare":
-        compare_metadata_files(args.file1, args.file2, args.bytes)
-    elif args.command == "frida":
-        generate_frida_script(args.offset, args.output)
-    elif args.command == "extract":
-        if not os.path.isfile(args.libunity):
-            print(f"{Fore.RED}Error: {args.libunity} not found{Style.RESET_ALL}")
-            sys.exit(1)
-        metadata, _ = extract_metadata(args.libunity, args.size)
-        with open(args.output, "wb") as f:
-            f.write(metadata)
-        print(f"{Fore.GREEN}Metadata extracted to {args.output}{Style.RESET_ALL}")
-    elif args.command == "decrypt":
-        if not os.path.isfile(args.input):
-            print(f"{Fore.RED}Error: {args.input} not found{Style.RESET_ALL}")
-            sys.exit(1)
-        with open(args.input, "rb") as f:
-            metadata = f.read()
-        decrypt_metadata(metadata, args.output)
-    elif args.command == "info":
-        if not os.path.isfile(args.input):
-            print(f"{Fore.RED}Error: {args.input} not found{Style.RESET_ALL}")
-            sys.exit(1)
-        with open(args.input, "rb") as f:
-            data = f.read(512)
-        print(f"\n{Fore.CYAN}=== Metadata Info ==={Style.RESET_ALL}")
-        print(f"Magic: {data[:4].hex().upper()}")
-        version, desc = get_metadata_version(data)
-        print(f"Version: {version} ({desc})")
-        print(f"File size: {os.path.getsize(args.input)} bytes")
-        if data[:4] != METADATA_MAGIC:
-            print(f"{Fore.YELLOW}Warning: Invalid magic bytes - file may be encrypted{Style.RESET_ALL}")
-            decrypted, key = try_decrypt_metadata(data)
-            if key:
-                print(f"{Fore.GREEN}Possible encryption key: {key}{Style.RESET_ALL}")
-    elif args.command == "apk":
-        if not os.path.exists(args.input):
-            print(f"{Fore.RED}Error: {args.input} not found{Style.RESET_ALL}")
-            sys.exit(1)
-        extract_from_apk(args.input, args.output, args.force)
-    elif args.command == "memory-dump":
-        output = args.output or "dump-metadata.js"
-        generate_frida_memory_dump_script(output)
-    elif args.command == "il2cppdumper":
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        il2cppdumper_path = os.path.join(script_dir, "Il2CppDumper.exe")
-        if not os.path.isfile(il2cppdumper_path):
-            print(f"{Fore.RED}Error: Il2CppDumper.exe not found at {il2cppdumper_path}{Style.RESET_ALL}")
-            print(f"{Fore.CYAN}Download: https://github.com/Perfare/Il2CppDumper/releases{Style.RESET_ALL}")
-            sys.exit(1)
-        if not os.path.isfile(args.libil2cpp):
-            print(f"{Fore.RED}Error: libil2cpp.so not found{Style.RESET_ALL}")
-            sys.exit(1)
-        if not os.path.isfile(args.metadata):
-            print(f"{Fore.RED}Error: global-metadata.dat not found{Style.RESET_ALL}")
-            sys.exit(1)
-        output = args.output or os.path.join(script_dir, "Il2CppDumper", "output")
-        os.makedirs(os.path.dirname(output), exist_ok=True)
-        try:
-            result = subprocess.run(
-                [il2cppdumper_path, args.libil2cpp, args.metadata, os.path.dirname(output)],
-                capture_output=True,
-                text=True,
-                timeout=300
-            )
-            print(f"\n{Fore.CYAN}Il2CppDumper output:{Style.RESET_ALL}")
-            print(result.stdout)
-            if result.stderr:
-                print(f"{Fore.RED}Errors:{Style.RESET_ALL}")
-                print(result.stderr)
-            if result.returncode == 0:
-                print(f"{Fore.GREEN}Il2CppDumper completed successfully!{Style.RESET_ALL}")
-                print(f"{Fore.CYAN}Output: {output}{Style.RESET_ALL}")
-            else:
-                print(f"{Fore.YELLOW}Exited with code {result.returncode}{Style.RESET_ALL}")
-        except subprocess.TimeoutExpired:
-            print(f"{Fore.RED}Error: Timeout (5 min){Style.RESET_ALL}")
-        except Exception as e:
-            print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
-    elif args.command == "menu":
-        interactive_menu()
-    else:
-        interactive_menu()
-
-
-def interactive_menu():
-    print(Fore.CYAN + BANNER + Style.RESET_ALL)
-    loading_animation()
-    while True:
-        print_menu()
-        choice = input(f"{Fore.CYAN}{i18n.get('select_option')}{Style.RESET_ALL}: ").strip()
-
-        if choice == "1":
-            menu_compare()
-        elif choice == "2":
-            menu_frida()
-        elif choice == "3":
-            menu_extract()
-        elif choice == "4":
-            menu_decrypt()
-        elif choice == "5":
-            menu_info()
-        elif choice == "6":
-            menu_apk()
-        elif choice == "7":
-            menu_frida_memory_dump()
-        elif choice == "8":
-            menu_il2cppdumper()
-        elif choice == "9":
-            lang = i18n.toggle_language()
-            print(f"{Fore.GREEN}{i18n.get('lang_changed')}{lang.upper()}{Style.RESET_ALL}")
-        elif choice == "0":
-            print(f"{Fore.GREEN}{i18n.get('exiting')}{Style.RESET_ALL}")
-            break
-        else:
-            print(f"{Fore.RED}{i18n.get('invalid_option')}{Style.RESET_ALL}")
-
-        input(f"\n{Fore.CYAN}{i18n.get('press_enter')}{Style.RESET_ALL}")
-
-
 def print_menu():
     print(f"\n{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
     print(f"  {Fore.GREEN}1{Style.RESET_ALL}. {i18n.get('menu_compare')}")
@@ -1227,10 +1055,12 @@ def menu_extract():
         return
     size = input(i18n.get("max_size")).strip()
     size = int(size) if size else 30_000_000
-    metadata, _ = extract_metadata(libunity, size)
-    with open(output, "wb") as f:
-        f.write(metadata)
-    print(f"{Fore.GREEN}{i18n.get('extracted_to')}{output}{Style.RESET_ALL}")
+    result = extract_metadata(libunity, size)
+    if result:
+        metadata, _ = result
+        with open(output, "wb") as f:
+            f.write(metadata)
+        print(f"{Fore.GREEN}{i18n.get('extracted_to')}{output}{Style.RESET_ALL}")
 
 
 def menu_decrypt():
@@ -1413,6 +1243,183 @@ def menu_il2cppdumper():
         print(f"{Fore.RED}{i18n.get('il2cppdumper_not_found')}{Style.RESET_ALL}")
     except Exception as e:
         print(f"{Fore.RED}{i18n.get('error')}{e}{Style.RESET_ALL}")
+
+
+def interactive_menu():
+    print(Fore.CYAN + BANNER + Style.RESET_ALL)
+    loading_animation()
+    while True:
+        print_menu()
+        choice = input(f"{Fore.CYAN}{i18n.get('select_option')}{Style.RESET_ALL}: ").strip()
+
+        if choice == "1":
+            menu_compare()
+        elif choice == "2":
+            menu_frida()
+        elif choice == "3":
+            menu_extract()
+        elif choice == "4":
+            menu_decrypt()
+        elif choice == "5":
+            menu_info()
+        elif choice == "6":
+            menu_apk()
+        elif choice == "7":
+            menu_frida_memory_dump()
+        elif choice == "8":
+            menu_il2cppdumper()
+        elif choice == "9":
+            lang = i18n.toggle_language()
+            print(f"{Fore.GREEN}{i18n.get('lang_changed')}{lang.upper()}{Style.RESET_ALL}")
+        elif choice == "0":
+            print(f"{Fore.GREEN}{i18n.get('exiting')}{Style.RESET_ALL}")
+            break
+        else:
+            print(f"{Fore.RED}{i18n.get('invalid_option')}{Style.RESET_ALL}")
+
+        input(f"\n{Fore.CYAN}{i18n.get('press_enter')}{Style.RESET_ALL}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="Metadata-Worker",
+        description="IL2CPP Metadata Tool - Compare, Extract, Decrypt, Dump APK",
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    compare_parser = subparsers.add_parser("compare", help="Compare two metadata files")
+    compare_parser.add_argument("file1", help="First metadata file")
+    compare_parser.add_argument("file2", help="Second metadata file")
+    compare_parser.add_argument(
+        "-b", "--bytes", type=int, default=10, help="Bytes to compare"
+    )
+
+    frida_parser = subparsers.add_parser("frida", help="Generate Frida script")
+    frida_parser.add_argument("offset", help="LoadMetaDataFile offset (e.g., 0x123456)")
+    frida_parser.add_argument("-o", "--output", help="Output file path")
+
+    extract_parser = subparsers.add_parser(
+        "extract", help="Extract metadata from libunity.so"
+    )
+    extract_parser.add_argument("libunity", help="Path to libunity.so")
+    extract_parser.add_argument("-o", "--output", required=True, help="Output path")
+    extract_parser.add_argument(
+        "-s", "--size", type=int, default=30_000_000, help="Max extraction size"
+    )
+
+    decrypt_parser = subparsers.add_parser("decrypt", help="Decrypt extracted metadata")
+    decrypt_parser.add_argument("input", help="Path to encrypted metadata")
+    decrypt_parser.add_argument("-o", "--output", required=True, help="Output path")
+
+    info_parser = subparsers.add_parser("info", help="Show metadata info")
+    info_parser.add_argument("input", help="Path to metadata file")
+
+    apk_parser = subparsers.add_parser("apk", help="Extract metadata from APK or unpacked APK folder")
+    apk_parser.add_argument("input", help="Path to APK file or unpacked APK folder")
+    apk_parser.add_argument("-o", "--output", required=True, help="Output path")
+    apk_parser.add_argument("-f", "--force", action="store_true", help="Force extract even if metadata looks encrypted")
+
+    memory_dump_parser = subparsers.add_parser("memory-dump", help="Generate Frida memory dump script (CameroonD style)")
+    memory_dump_parser.add_argument("-o", "--output", help="Output file path")
+
+    il2cppdumper_parser = subparsers.add_parser("il2cppdumper", help="Run Il2CppDumper.exe (requires libil2cpp.so + metadata)")
+    il2cppdumper_parser.add_argument("libil2cpp", help="Path to libil2cpp.so")
+    il2cppdumper_parser.add_argument("metadata", help="Path to global-metadata.dat")
+    il2cppdumper_parser.add_argument("-o", "--output", help="Output folder path")
+
+    menu_parser = subparsers.add_parser("menu", help="Interactive menu mode")
+
+    args = parser.parse_args()
+
+    if args.command and args.command != "menu":
+        print(Fore.CYAN + BANNER + Style.RESET_ALL)
+        loading_animation()
+
+    if args.command == "compare":
+        compare_metadata_files(args.file1, args.file2, args.bytes)
+    elif args.command == "frida":
+        generate_frida_script(args.offset, args.output)
+    elif args.command == "extract":
+        if not os.path.isfile(args.libunity):
+            print(f"{Fore.RED}Error: {args.libunity} not found{Style.RESET_ALL}")
+            sys.exit(1)
+        result = extract_metadata(args.libunity, args.size)
+        if result:
+            metadata, _ = result
+            with open(args.output, "wb") as f:
+                f.write(metadata)
+            print(f"{Fore.GREEN}Metadata extracted to {args.output}{Style.RESET_ALL}")
+    elif args.command == "decrypt":
+        if not os.path.isfile(args.input):
+            print(f"{Fore.RED}Error: {args.input} not found{Style.RESET_ALL}")
+            sys.exit(1)
+        with open(args.input, "rb") as f:
+            metadata = f.read()
+        decrypt_metadata(metadata, args.output)
+    elif args.command == "info":
+        if not os.path.isfile(args.input):
+            print(f"{Fore.RED}Error: {args.input} not found{Style.RESET_ALL}")
+            sys.exit(1)
+        with open(args.input, "rb") as f:
+            data = f.read(512)
+        print(f"\n{Fore.CYAN}=== Metadata Info ==={Style.RESET_ALL}")
+        print(f"Magic: {data[:4].hex().upper()}")
+        version, desc = get_metadata_version(data)
+        print(f"Version: {version} ({desc})")
+        print(f"File size: {os.path.getsize(args.input)} bytes")
+        if data[:4] != METADATA_MAGIC:
+            print(f"{Fore.YELLOW}Warning: Invalid magic bytes - file may be encrypted{Style.RESET_ALL}")
+            decrypted, key = try_decrypt_metadata(data)
+            if key:
+                print(f"{Fore.GREEN}Possible encryption key: {key}{Style.RESET_ALL}")
+    elif args.command == "apk":
+        if not os.path.exists(args.input):
+            print(f"{Fore.RED}Error: {args.input} not found{Style.RESET_ALL}")
+            sys.exit(1)
+        extract_from_apk(args.input, args.output, args.force)
+    elif args.command == "memory-dump":
+        output = args.output or "dump-metadata.js"
+        generate_frida_memory_dump_script(output)
+    elif args.command == "il2cppdumper":
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        il2cppdumper_path = os.path.join(script_dir, "Il2CppDumper.exe")
+        if not os.path.isfile(il2cppdumper_path):
+            print(f"{Fore.RED}Error: Il2CppDumper.exe not found at {il2cppdumper_path}{Style.RESET_ALL}")
+            print(f"{Fore.CYAN}Download: https://github.com/Perfare/Il2CppDumper/releases{Style.RESET_ALL}")
+            sys.exit(1)
+        if not os.path.isfile(args.libil2cpp):
+            print(f"{Fore.RED}Error: libil2cpp.so not found{Style.RESET_ALL}")
+            sys.exit(1)
+        if not os.path.isfile(args.metadata):
+            print(f"{Fore.RED}Error: global-metadata.dat not found{Style.RESET_ALL}")
+            sys.exit(1)
+        output = args.output or os.path.join(script_dir, "Il2CppDumper", "output")
+        os.makedirs(os.path.dirname(output), exist_ok=True)
+        try:
+            result = subprocess.run(
+                [il2cppdumper_path, args.libil2cpp, args.metadata, os.path.dirname(output)],
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+            print(f"\n{Fore.CYAN}Il2CppDumper output:{Style.RESET_ALL}")
+            print(result.stdout)
+            if result.stderr:
+                print(f"{Fore.RED}Errors:{Style.RESET_ALL}")
+                print(result.stderr)
+            if result.returncode == 0:
+                print(f"{Fore.GREEN}Il2CppDumper completed successfully!{Style.RESET_ALL}")
+                print(f"{Fore.CYAN}Output: {output}{Style.RESET_ALL}")
+            else:
+                print(f"{Fore.YELLOW}Exited with code {result.returncode}{Style.RESET_ALL}")
+        except subprocess.TimeoutExpired:
+            print(f"{Fore.RED}Error: Timeout (5 min){Style.RESET_ALL}")
+        except Exception as e:
+            print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+    elif args.command == "menu":
+        interactive_menu()
+    else:
+        interactive_menu()
 
 
 if __name__ == "__main__":
