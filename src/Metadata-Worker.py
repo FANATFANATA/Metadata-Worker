@@ -19,6 +19,14 @@ except ImportError:
 from tqdm import tqdm
 from colorama import Fore, Style, init as colorama_init
 from elftools.elf.elffile import ELFFile
+
+if getattr(sys, 'frozen', False):
+    script_dir = os.path.dirname(sys.executable)
+else:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
+
 import i18n
 
 colorama_init(autoreset=True)
