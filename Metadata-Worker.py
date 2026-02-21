@@ -19,20 +19,11 @@ except ImportError:
 from tqdm import tqdm
 from colorama import Fore, Style, init as colorama_init
 from elftools.elf.elffile import ELFFile
+import i18n
 
 colorama_init(autoreset=True)
 
-BANNER = """
-   .=-.-.                   _,.---._      .-._            .=-.-.    ,---.
-  /==/_ /   .-.,.---.     ,-.' , -  `.   /==/ \\  .-._    /==/_ /  .--.'  \\
- |==|, |   /==/  `   \\   /==/_,  ,  - \\  |==|, \\/ /, /  |==|, |   \\==-/\\ \\
- |==|  |  |==|-, .=., | |==|   .=.     | |==|-  \\|  |   |==|  |   /==-|_\\ |
- |==|- |  |==|   '='  / |==|_ : ;=:  - | |==| ,  | -|   |==|- |   \\==\\,   - \\
- |==| ,|  |==|- ,   .'  |==| , '='     | |==| -   _ |   |==| ,|   /==/ -   ,|
- |==|- |  |==|_  . ,'.   \\==\\ -    ,_ /  |==|  /\\ , |   |==|- |  /==-/\\ \\ - \\
- /==/. /  /==/  /\\ ,  )   '.='. -   .'   /==/, | |- |   /==/. /  \\==\\ _.\\=-'
- `--`-`   `--`-`--`--'      `--`--''     `--`./  `--`   `--`-`    `--`
-"""
+BANNER = i18n.get("banner")
 
 FRIDA_SCRIPT_TEMPLATE = """Interceptor.attach(Module.findExportByName(null, 'dlopen'), {{
     onEnter: function(args) {{
@@ -205,36 +196,36 @@ def clear_screen():
 def select_file_cli(title: str, filetypes: list) -> str:
     print(f"{Fore.CYAN}{title}{Style.RESET_ALL}")
     while True:
-        path = input("Путь к файлу (или 'q' для отмены): ").strip()
+        path = input(i18n.get("path_to_file")).strip()
         if path.lower() == 'q':
             return ""
         if os.path.isfile(path):
             return path
-        print(f"{Fore.RED}Файл не найден, попробуйте снова{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('file_not_found')}{Style.RESET_ALL}")
 
 
 def select_save_file_cli(title: str, filetypes: list, defaultextension: str = "") -> str:
     print(f"{Fore.CYAN}{title}{Style.RESET_ALL}")
     while True:
-        path = input("Путь для сохранения (или 'q' для отмены): ").strip()
+        path = input(i18n.get("path_to_save")).strip()
         if path.lower() == 'q':
             return ""
         if path:
             if defaultextension and not path.endswith(defaultextension):
                 path += defaultextension
             return path
-        print(f"{Fore.RED}Введите путь{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('enter_path')}{Style.RESET_ALL}")
 
 
 def select_folder_cli(title: str) -> str:
     print(f"{Fore.CYAN}{title}{Style.RESET_ALL}")
     while True:
-        path = input("Путь к папке (или 'q' для отмены): ").strip()
+        path = input(i18n.get("path_to_folder")).strip()
         if path.lower() == 'q':
             return ""
         if os.path.isdir(path):
             return path
-        print(f"{Fore.RED}Папка не найдена, попробуйте снова{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('folder_not_found')}{Style.RESET_ALL}")
 
 
 def select_file(title: str, filetypes: list) -> str:
@@ -291,9 +282,9 @@ def select_folder(title: str) -> str:
 def loading_animation():
     frames = ["|", "/", "-", "\\"]
     for frame in frames:
-        print(f"Loading... {frame}", end="\r")
+        print(f"{i18n.get('running')}{frame}", end="\r")
         time.sleep(0.2)
-    print("Loading complete!     ")
+    print(f"{i18n.get('loading_complete')}     ")
 
 
 def is_valid_metadata(data: bytes) -> bool:
@@ -1141,8 +1132,8 @@ def interactive_menu():
     loading_animation()
     while True:
         print_menu()
-        choice = input(f"{Fore.CYAN}Select option{Style.RESET_ALL}: ").strip()
-        
+        choice = input(f"{Fore.CYAN}{i18n.get('select_option')}{Style.RESET_ALL}: ").strip()
+
         if choice == "1":
             menu_compare()
         elif choice == "2":
@@ -1159,52 +1150,56 @@ def interactive_menu():
             menu_frida_memory_dump()
         elif choice == "8":
             menu_il2cppdumper()
+        elif choice == "9":
+            lang = i18n.toggle_language()
+            print(f"{Fore.GREEN}{i18n.get('lang_changed')}{lang.upper()}{Style.RESET_ALL}")
         elif choice == "0":
-            print(f"{Fore.GREEN}Exiting...{Style.RESET_ALL}")
+            print(f"{Fore.GREEN}{i18n.get('exiting')}{Style.RESET_ALL}")
             break
         else:
-            print(f"{Fore.RED}Invalid option{Style.RESET_ALL}")
+            print(f"{Fore.RED}{i18n.get('invalid_option')}{Style.RESET_ALL}")
 
-        input(f"\n{Fore.CYAN}Press Enter to continue...{Style.RESET_ALL}")
+        input(f"\n{Fore.CYAN}{i18n.get('press_enter')}{Style.RESET_ALL}")
 
 
 def print_menu():
     print(f"\n{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
-    print(f"  {Fore.GREEN}1{Style.RESET_ALL}. Compare metadata files")
-    print(f"  {Fore.GREEN}2{Style.RESET_ALL}. Generate Frida script")
-    print(f"  {Fore.GREEN}3{Style.RESET_ALL}. Extract metadata from libunity.so")
-    print(f"  {Fore.GREEN}4{Style.RESET_ALL}. Decrypt metadata")
-    print(f"  {Fore.GREEN}5{Style.RESET_ALL}. Show metadata info")
-    print(f"  {Fore.GREEN}6{Style.RESET_ALL}. Extract from APK/folder")
-    print(f"  {Fore.GREEN}7{Style.RESET_ALL}. Generate Frida memory dump script")
-    print(f"  {Fore.GREEN}8{Style.RESET_ALL}. Run Il2CppDumper")
-    print(f"  {Fore.RED}0{Style.RESET_ALL}. Exit")
+    print(f"  {Fore.GREEN}1{Style.RESET_ALL}. {i18n.get('menu_compare')}")
+    print(f"  {Fore.GREEN}2{Style.RESET_ALL}. {i18n.get('menu_frida')}")
+    print(f"  {Fore.GREEN}3{Style.RESET_ALL}. {i18n.get('menu_extract')}")
+    print(f"  {Fore.GREEN}4{Style.RESET_ALL}. {i18n.get('menu_decrypt')}")
+    print(f"  {Fore.GREEN}5{Style.RESET_ALL}. {i18n.get('menu_info')}")
+    print(f"  {Fore.GREEN}6{Style.RESET_ALL}. {i18n.get('menu_apk')}")
+    print(f"  {Fore.GREEN}7{Style.RESET_ALL}. {i18n.get('menu_frida_dump')}")
+    print(f"  {Fore.GREEN}8{Style.RESET_ALL}. {i18n.get('menu_il2cppdumper')}")
+    print(f"  {Fore.YELLOW}9{Style.RESET_ALL}. {i18n.get('menu_switch_lang')}")
+    print(f"  {Fore.RED}0{Style.RESET_ALL}. {i18n.get('menu_exit')}")
     print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
 
 
 def menu_compare():
     clear_screen()
-    print(f"\n{Fore.CYAN}=== Compare Metadata Files ==={Style.RESET_ALL}")
-    file1 = select_file("Select first metadata file", [("DAT files", "*.dat"), ("All files", "*.*")])
+    print(f"\n{Fore.CYAN}=== {i18n.get('compare_title')} ==={Style.RESET_ALL}")
+    file1 = select_file(i18n.get("select_first_file"), [("DAT files", "*.dat"), ("All files", "*.*")])
     if not file1:
-        print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
         return
-    print(f"First file: {file1}")
-    file2 = select_file("Select second metadata file", [("DAT files", "*.dat"), ("All files", "*.*")])
+    print(f"{i18n.get('first_file')}{file1}")
+    file2 = select_file(i18n.get("select_second_file"), [("DAT files", "*.dat"), ("All files", "*.*")])
     if not file2:
-        print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
         return
-    print(f"Second file: {file2}")
-    bytes_count = input("Bytes to compare (10): ").strip()
+    print(f"{i18n.get('second_file')}{file2}")
+    bytes_count = input(i18n.get("bytes_to_compare")).strip()
     bytes_count = int(bytes_count) if bytes_count else 10
     compare_metadata_files(file1, file2, bytes_count)
 
 
 def menu_frida():
     clear_screen()
-    print(f"\n{Fore.CYAN}=== Generate Frida Script ==={Style.RESET_ALL}")
-    offset = input("LoadMetaDataFile offset (e.g., 0x123456): ").strip()
-    output = select_save_file("Save Frida script", [("JS files", "*.js"), ("All files", "*.*")], ".js")
+    print(f"\n{Fore.CYAN}=== {i18n.get('frida_title')} ==={Style.RESET_ALL}")
+    offset = input(i18n.get("offset_prompt")).strip()
+    output = select_save_file(i18n.get("save_frida"), [("JS files", "*.js"), ("All files", "*.*")], ".js")
     if not output:
         output = "frida.js"
     generate_frida_script(offset, output)
@@ -1212,101 +1207,101 @@ def menu_frida():
 
 def menu_extract():
     clear_screen()
-    print(f"\n{Fore.CYAN}=== Extract Metadata from libunity.so ==={Style.RESET_ALL}")
-    libunity = select_file("Select libunity.so", [("SO files", "*.so"), ("All files", "*.*")])
+    print(f"\n{Fore.CYAN}=== {i18n.get('extract_title')} ==={Style.RESET_ALL}")
+    libunity = select_file(i18n.get("select_libunity"), [("SO files", "*.so"), ("All files", "*.*")])
     if not libunity:
-        print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
         return
-    print(f"libunity.so: {libunity}")
-    output = select_save_file("Save metadata", [("DAT files", "*.dat"), ("All files", "*.*")], ".dat")
+    print(f"{i18n.get('libunity')}{libunity}")
+    output = select_save_file(i18n.get("save_metadata"), [("DAT files", "*.dat"), ("All files", "*.*")], ".dat")
     if not output:
-        print(f"{Fore.RED}Error: No output path selected{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('no_output_path')}{Style.RESET_ALL}")
         return
-    size = input("Max size (30000000): ").strip()
+    size = input(i18n.get("max_size")).strip()
     size = int(size) if size else 30_000_000
     metadata, _ = extract_metadata(libunity, size)
     with open(output, "wb") as f:
         f.write(metadata)
-    print(f"{Fore.GREEN}Metadata extracted to {output}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}{i18n.get('extracted_to')}{output}{Style.RESET_ALL}")
 
 
 def menu_decrypt():
     clear_screen()
-    print(f"\n{Fore.CYAN}=== Decrypt Metadata ==={Style.RESET_ALL}")
-    input_file = select_file("Select encrypted metadata", [("DAT files", "*.dat"), ("All files", "*.*")])
+    print(f"\n{Fore.CYAN}=== {i18n.get('decrypt_title')} ==={Style.RESET_ALL}")
+    input_file = select_file(i18n.get("select_encrypted"), [("DAT files", "*.dat"), ("All files", "*.*")])
     if not input_file:
-        print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
         return
-    print(f"Input: {input_file}")
-    output = select_save_file("Save decrypted metadata", [("DAT files", "*.dat"), ("All files", "*.*")], ".dat")
+    print(f"{i18n.get('input')}{input_file}")
+    output = select_save_file(i18n.get("save_decrypted"), [("DAT files", "*.dat"), ("All files", "*.*")], ".dat")
     if not output:
-        print(f"{Fore.RED}Error: No output path selected{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('no_output_path')}{Style.RESET_ALL}")
         return
     try:
         with open(input_file, "rb") as f:
             metadata = f.read()
         decrypt_metadata(metadata, output)
     except Exception as e:
-        print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('error')}{e}{Style.RESET_ALL}")
 
 
 def menu_info():
     clear_screen()
-    print(f"\n{Fore.CYAN}=== Metadata Info ==={Style.RESET_ALL}")
-    input_file = select_file("Select metadata file", [("DAT files", "*.dat"), ("All files", "*.*")])
+    print(f"\n{Fore.CYAN}=== {i18n.get('info_title')} ==={Style.RESET_ALL}")
+    input_file = select_file(i18n.get("select_metadata"), [("DAT files", "*.dat"), ("All files", "*.*")])
     if not input_file:
-        print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
         return
-    print(f"File: {input_file}")
+    print(f"{i18n.get('file')}{input_file}")
     try:
         with open(input_file, "rb") as f:
             data = f.read(512)
-        print(f"\n{Fore.CYAN}=== Metadata Info ==={Style.RESET_ALL}")
-        print(f"Magic: {data[:4].hex().upper()}")
+        print(f"\n{Fore.CYAN}=== {i18n.get('metadata_info_title')} ==={Style.RESET_ALL}")
+        print(f"{i18n.get('magic')}{data[:4].hex().upper()}")
         version, desc = get_metadata_version(data)
-        print(f"Version: {version} ({desc})")
-        print(f"File size: {os.path.getsize(input_file)} bytes")
+        print(f"{i18n.get('version')}{version} ({desc})")
+        print(f"{i18n.get('file_size')}{os.path.getsize(input_file)} bytes")
         if data[:4] != METADATA_MAGIC:
-            print(f"{Fore.YELLOW}Warning: Invalid magic bytes - file may be encrypted{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}{i18n.get('warning_invalid_magic')}{Style.RESET_ALL}")
             decrypted, key = try_decrypt_metadata(data)
             if key:
-                print(f"{Fore.GREEN}Possible encryption key: {key}{Style.RESET_ALL}")
+                print(f"{Fore.GREEN}{i18n.get('possible_encryption')}{key}{Style.RESET_ALL}")
     except Exception as e:
-        print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('error')}{e}{Style.RESET_ALL}")
 
 
 def menu_apk():
     clear_screen()
-    print(f"\n{Fore.CYAN}=== Extract from APK/Folder ==={Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}Select APK file or unpacked folder{Style.RESET_ALL}")
-    input_path = select_file("Select APK file or folder", [("APK files", "*.apk"), ("All files", "*.*")])
+    print(f"\n{Fore.CYAN}=== {i18n.get('apk_title')} ==={Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}{i18n.get('apk_select')}{Style.RESET_ALL}")
+    input_path = select_file(i18n.get("select_apk"), [("APK files", "*.apk"), ("All files", "*.*")])
     if not input_path:
-        print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
         return
     if os.path.isdir(input_path):
-        print(f"Folder: {input_path}")
+        print(f"{i18n.get('folder')}{input_path}")
     else:
-        print(f"APK: {input_path}")
-    output = select_save_file("Save metadata", [("DAT files", "*.dat"), ("All files", "*.*")], ".dat")
+        print(f"{i18n.get('apk')}{input_path}")
+    output = select_save_file(i18n.get("save_metadata"), [("DAT files", "*.dat"), ("All files", "*.*")], ".dat")
     if not output:
-        print(f"{Fore.RED}Error: No output path selected{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('no_output_path')}{Style.RESET_ALL}")
         return
-    force = input("Force extract if encrypted? (y/N): ").strip().lower() == 'y'
+    force = input(i18n.get("force_extract")).strip().lower() == 'y'
     try:
         extract_from_apk(input_path, output, force)
     except Exception as e:
-        print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('error')}{e}{Style.RESET_ALL}")
 
 
 def menu_frida_memory_dump():
     clear_screen()
-    print(f"\n{Fore.CYAN}=== Generate Frida Memory Dump Script ==={Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}CameroonD/Il2CppMetadataExtractor style{Style.RESET_ALL}")
-    print(f"\n{Fore.CYAN}Usage:{Style.RESET_ALL}")
+    print(f"\n{Fore.CYAN}=== {i18n.get('memory_dump_title')} ==={Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}{i18n.get('memory_dump_style')}{Style.RESET_ALL}")
+    print(f"\n{Fore.CYAN}{i18n.get('memory_dump_usage')}{Style.RESET_ALL}")
     print(f"  python dump-metadata.py com.game.package")
     print(f"  python dump-metadata.py com.game.package -o 0x123456")
-    print(f"\nRequires: pip install frida")
-    output = select_save_file("Save Frida memory dump script", [("JS files", "*.js"), ("All files", "*.*")], ".js")
+    print(f"\n{Fore.CYAN}{i18n.get('memory_dump_requires')}{Style.RESET_ALL}")
+    output = select_save_file(i18n.get("save_frida"), [("JS files", "*.js"), ("All files", "*.*")], ".js")
     if not output:
         output = "dump-metadata.js"
     generate_frida_memory_dump_script(output)
@@ -1345,45 +1340,45 @@ def main():
 if __name__ == '__main__':
     main()
 '''
-    py_output = input("Generate Python runner script? (y/N): ").strip().lower()
+    py_output = input(i18n.get("generate_python")).strip().lower()
     if py_output == 'y':
-        py_path = input("Output path (dump-metadata.py): ").strip() or "dump-metadata.py"
+        py_path = input(i18n.get("output_path")).strip() or "dump-metadata.py"
         with open(py_path, "w") as f:
             f.write(py_script)
-        print(f"{Fore.GREEN}Python runner saved to {py_path}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}{i18n.get('python_saved')}{py_path}{Style.RESET_ALL}")
 
 
 def menu_il2cppdumper():
     clear_screen()
-    print(f"\n{Fore.CYAN}=== Run Il2CppDumper ==={Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}Requires: Il2CppDumper.exe in the same folder{Style.RESET_ALL}")
+    print(f"\n{Fore.CYAN}=== {i18n.get('il2cppdumper_title')} ==={Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}{i18n.get('il2cppdumper_requires')}{Style.RESET_ALL}")
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     il2cppdumper_path = os.path.join(script_dir, "Il2CppDumper.exe")
 
     if not os.path.isfile(il2cppdumper_path):
-        print(f"{Fore.RED}Error: Il2CppDumper.exe not found at {il2cppdumper_path}{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}Download: https://github.com/Perfare/Il2CppDumper/releases{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('il2cppdumper_not_found')}{il2cppdumper_path}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}{i18n.get('il2cppdumper_download')}{Style.RESET_ALL}")
         return
 
-    libil2cpp = select_file("Select libil2cpp.so", [("SO files", "*.so"), ("All files", "*.*")])
+    libil2cpp = select_file(i18n.get("select_libil2cpp"), [("SO files", "*.so"), ("All files", "*.*")])
     if not libil2cpp:
-        print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
         return
-    print(f"libil2cpp.so: {libil2cpp}")
+    print(f"{i18n.get('libunity')}{libil2cpp}")
 
-    metadata = select_file("Select global-metadata.dat", [("DAT files", "*.dat"), ("All files", "*.*")])
+    metadata = select_file(i18n.get("select_metadata_dat"), [("DAT files", "*.dat"), ("All files", "*.*")])
     if not metadata:
-        print(f"{Fore.RED}Error: No file selected{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
         return
-    print(f"metadata: {metadata}")
+    print(f"{i18n.get('metadata')}{metadata}")
 
-    output = select_folder("Select output folder")
+    output = select_folder(i18n.get("select_output_folder"))
     if not output:
         output = os.path.join(script_dir, "Il2CppDumper", "output")
-    print(f"output: {output}")
+    print(f"{i18n.get('output')}{output}")
 
-    print(f"\n{Fore.CYAN}Running Il2CppDumper...{Style.RESET_ALL}")
+    print(f"\n{Fore.CYAN}{i18n.get('running_il2cppdumper')}{Style.RESET_ALL}")
 
     os.makedirs(output, exist_ok=True)
 
@@ -1394,22 +1389,22 @@ def menu_il2cppdumper():
             text=True,
             timeout=300
         )
-        print(f"\n{Fore.CYAN}Il2CppDumper output:{Style.RESET_ALL}")
+        print(f"\n{Fore.CYAN}{i18n.get('il2cppdumper_output')}{Style.RESET_ALL}")
         print(result.stdout)
         if result.stderr:
-            print(f"{Fore.RED}Errors:{Style.RESET_ALL}")
+            print(f"{Fore.RED}{i18n.get('errors')}{Style.RESET_ALL}")
             print(result.stderr)
         if result.returncode == 0:
-            print(f"\n{Fore.GREEN}Il2CppDumper completed successfully!{Style.RESET_ALL}")
-            print(f"{Fore.CYAN}Check output folder: {output}{Style.RESET_ALL}")
+            print(f"\n{Fore.GREEN}{i18n.get('il2cppdumper_success')}{Style.RESET_ALL}")
+            print(f"{Fore.CYAN}{i18n.get('check_output')}{output}{Style.RESET_ALL}")
         else:
-            print(f"{Fore.YELLOW}Il2CppDumper exited with code {result.returncode}{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}{i18n.get('il2cppdumper_exited')}{result.returncode}{Style.RESET_ALL}")
     except subprocess.TimeoutExpired:
-        print(f"{Fore.RED}Error: Il2CppDumper timed out (5 min limit){Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('timeout')}{Style.RESET_ALL}")
     except FileNotFoundError:
-        print(f"{Fore.RED}Error: Il2CppDumper.exe not found{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('il2cppdumper_not_found')}{Style.RESET_ALL}")
     except Exception as e:
-        print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+        print(f"{Fore.RED}{i18n.get('error')}{e}{Style.RESET_ALL}")
 
 
 if __name__ == "__main__":
