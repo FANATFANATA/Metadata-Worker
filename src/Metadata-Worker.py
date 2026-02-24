@@ -1,11 +1,15 @@
 import argparse
 import collections
+import hashlib
+import json
+import logging
 import os
 import struct
 import sys
 import time
 import zipfile
-from typing import Optional, Tuple, List, Callable, Any
+from datetime import datetime
+from typing import Optional, Tuple, List, Callable, Any, Dict
 from pathlib import Path
 
 try:
@@ -19,6 +23,12 @@ from tqdm import tqdm
 from colorama import Fore, Style, init as colorama_init
 from elftools.elf.elffile import ELFFile
 
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+
 if getattr(sys, "frozen", False):
     script_dir = os.path.dirname(sys.executable)
 else:
@@ -27,67 +37,161 @@ if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
 import i18n
 
-colorama_init(autoreset=True)
 BANNER = i18n.get("banner")
-METADATA_MAGIC = b"\xaf\x1b\xb1\xfa"
-METADATA_MARKER_64 = b"\x15\x00\x0c\x0c\x10\x1b\x23\x00\x00\x00\x00\x00\x28\x00\x2c\x10"
-METADATA_MARKER_32 = b"\x00\x01\x01\x02\x01\x02\x02\x03"
-METADATA_SIGNATURE = b"\x02\x00\x00\x00\x7c\x00\x00\x06\x0b\x00\x00\x00\x02\x00\x00\x00"
-METADATA_HEADER_MAGIC = b"\xaf\x1b\xb1\xfa\x1f\x00\x00\x00\x00\x01\x00\x00"
-SUPPORTED_VERSIONS = {
-    15: "Unity 2015",
-    16: "Unity 2017",
-    17: "Unity 2017.1",
-    18: "Unity 2017.2",
-    19: "Unity 2017.3",
-    20: "Unity 2017.4",
-    21: "Unity 2018",
-    22: "Unity 2018.2",
-    23: "Unity 2018.3",
-    24: "Unity 2019-2021",
-    25: "Unity 2019.3",
-    26: "Unity 2020",
-    27: "Unity 2020.2",
-    28: "Unity 2020.3",
-    29: "Unity 2021",
-    30: "Unity 2022",
-    31: "Unity 2022.2",
-    32: "Unity 2023",
-    33: "Unity 2023.1",
-    34: "Unity 2023.2",
-    35: "Unity 2024",
-    36: "Unity 2024.1",
-    37: "Unity 2024.2",
-    38: "Unity 2024.3",
-    39: "Unity 2025 (experimental)",
-    40: "Unity 2025.1 (experimental)",
-    41: "Unity 2025.2 (experimental)",
-    42: "Unity 2025.3 (experimental)",
-    43: "Unity 2026+ (experimental)",
+
+CONFIG_FILE = os.path.join(script_dir, "config.json")
+LOG_FILE = os.path.join(script_dir, "metadata-worker.log")
+VERSION = "1.0.0"
+GITHUB_API = "https://api.github.com/repos/user/repo/releases/latest"
+
+colorama_init(autoreset=True)
+
+THEMES = {
+    "default": {
+        "primary": Fore.CYAN,
+        "success": Fore.GREEN,
+        "warning": Fore.YELLOW,
+        "error": Fore.RED,
+        "accent": Fore.MAGENTA,
+    },
+    "blue": {
+        "primary": Fore.BLUE,
+        "success": Fore.CYAN,
+        "warning": Fore.YELLOW,
+        "error": Fore.RED,
+        "accent": Fore.WHITE,
+    },
+    "green": {
+        "primary": Fore.GREEN,
+        "success": Fore.CYAN,
+        "warning": Fore.YELLOW,
+        "error": Fore.RED,
+        "accent": Fore.WHITE,
+    },
+    "purple": {
+        "primary": Fore.MAGENTA,
+        "success": Fore.CYAN,
+        "warning": Fore.YELLOW,
+        "error": Fore.RED,
+        "accent": Fore.WHITE,
+    },
 }
-COMMON_XOR_KEYS = [
-    [0x77, 0x61, 0x6E, 0x7A, 0x67],
-    [0x77, 0x61, 0x6E, 0x27, 0x7A, 0x67],
-    [0xAA],
-    [0x5A],
-    [0x0A],
-    [0xFF],
-    [0x00, 0x00, 0x00, 0x00],
-    [0x12, 0x34, 0x56, 0x78],
-    [0xDE, 0xAD, 0xBE, 0xEF],
-    [0xE6, 0x68, 0xE9, 0x05],
-    [0xE6, 0x68, 0xE9, 0x05, 0xBC, 0xA7, 0x4E, 0xDB],
-    [0x49, 0x73, 0x58, 0xFF],
-]
+
+DEFAULT_CONFIG = {
+    "language": "en",
+    "theme": "default",
+    "recent_files": [],
+    "last_output_dir": "",
+    "check_updates": True,
+}
+
+config = DEFAULT_CONFIG.copy()
+logger = None
+current_theme = THEMES["default"]
+
+
+def setup_logging():
+    global logger
+    logger = logging.getLogger("MetadataWorker")
+    logger.setLevel(logging.DEBUG)
+    try:
+        file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+        file_handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    except (IOError, OSError):
+        pass
+
+
+def log_info(message: str):
+    if logger:
+        logger.info(message)
+
+
+def log_error(message: str):
+    if logger:
+        logger.error(message)
+
+
+def log_debug(message: str):
+    if logger:
+        logger.debug(message)
+
+
+def log_warning(message: str):
+    if logger:
+        logger.warning(message)
+
+
+def load_config():
+    global config, current_theme
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                saved_config = json.load(f)
+                config.update(saved_config)
+        i18n.set_language(config.get("language", "en"))
+        theme_name = config.get("theme", "default")
+        current_theme = THEMES.get(theme_name, THEMES["default"])
+    except (json.JSONDecodeError, IOError):
+        pass
+
+
+def save_config():
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+    except (IOError, OSError) as e:
+        log_error(f"Failed to save config: {e}")
+
+
+def add_recent_file(path: str):
+    recent = config.get("recent_files", [])
+    if path in recent:
+        recent.remove(path)
+    recent.insert(0, path)
+    config["recent_files"] = recent[:10]
+    save_config()
+
+
+def check_for_updates():
+    if not config.get("check_updates", True) or not REQUESTS_AVAILABLE:
+        return
+    try:
+        response = requests.get(GITHUB_API, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            latest = data.get("tag_name", "").lstrip("v")
+            if latest and latest != VERSION:
+                print(
+                    f"{current_theme['warning']}New version available: {latest} (current: {VERSION}){Style.RESET_ALL}"
+                )
+                log_info(f"Update available: {latest}")
+    except Exception:
+        pass
 
 
 def validate_path(path: str, must_exist: bool = True) -> Optional[str]:
     try:
+        if not path or not path.strip():
+            return None
         p = Path(path).resolve()
         if must_exist and not p.exists():
+            log_error(f"Path does not exist: {path}")
             return None
+        if not must_exist:
+            parent = p.parent
+            if not parent.exists():
+                log_error(f"Parent directory does not exist: {parent}")
+                return None
+        log_debug(f"Validated path: {p}")
         return str(p)
-    except (ValueError, OSError):
+    except (ValueError, OSError) as e:
+        log_error(f"Path validation error: {e}")
         return None
 
 
@@ -96,7 +200,12 @@ def clear_screen():
 
 
 def select_file_cli(title: str) -> str:
-    print(f"{Fore.CYAN}{title}{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}{title}{Style.RESET_ALL}")
+    recent = config.get("recent_files", [])
+    if recent:
+        print(f"{current_theme['primary']}Recent files:{Style.RESET_ALL}")
+        for i, path in enumerate(recent[:5], 1):
+            print(f"  [{i}] {path}")
     while True:
         try:
             path = input(i18n.get("path_to_file")).strip()
@@ -104,13 +213,16 @@ def select_file_cli(title: str) -> str:
             return ""
         if path.lower() == "q":
             return ""
+        if path.isdigit() and 1 <= int(path) <= len(recent):
+            path = recent[int(path) - 1]
         if os.path.isfile(path):
+            add_recent_file(path)
             return path
-        print(f"{Fore.RED}{i18n.get('file_not_found')}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}{i18n.get('file_not_found')}{Style.RESET_ALL}")
 
 
 def select_save_file_cli(title: str, defaultextension: str = "") -> str:
-    print(f"{Fore.CYAN}{title}{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}{title}{Style.RESET_ALL}")
     while True:
         try:
             path = input(i18n.get("path_to_save")).strip()
@@ -122,11 +234,11 @@ def select_save_file_cli(title: str, defaultextension: str = "") -> str:
             if defaultextension and not path.endswith(defaultextension):
                 path += defaultextension
             return path
-        print(f"{Fore.RED}{i18n.get('enter_path')}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}{i18n.get('enter_path')}{Style.RESET_ALL}")
 
 
 def select_folder_cli(title: str) -> str:
-    print(f"{Fore.CYAN}{title}{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}{title}{Style.RESET_ALL}")
     while True:
         try:
             path = input(i18n.get("path_to_folder")).strip()
@@ -136,7 +248,7 @@ def select_folder_cli(title: str) -> str:
             return ""
         if os.path.isdir(path):
             return path
-        print(f"{Fore.RED}{i18n.get('folder_not_found')}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}{i18n.get('folder_not_found')}{Style.RESET_ALL}")
 
 
 def select_file(title: str, filetypes: list) -> str:
@@ -147,6 +259,8 @@ def select_file(title: str, filetypes: list) -> str:
             root.withdraw()
             root.attributes("-topmost", True)
             file_path = filedialog.askopenfilename(title=title, filetypes=filetypes)
+            if file_path:
+                add_recent_file(file_path)
             return file_path
         except tk.TclError:
             pass
@@ -380,8 +494,9 @@ def find_metadata_in_libunity(libunity_path: str) -> Optional[int]:
     idx = data.find(METADATA_MAGIC)
     if idx != -1:
         print(
-            f"{Fore.GREEN}Found embedded metadata at offset {hex(idx)}{Style.RESET_ALL}"
+            f"{current_theme['success']}Found embedded metadata at offset {hex(idx)}{Style.RESET_ALL}"
         )
+        log_info(f"Found metadata in libunity at offset {hex(idx)}")
         return idx
     return None
 
@@ -393,13 +508,16 @@ def find_metadata_in_apk(apk_path: str) -> Optional[Tuple[str, int]]:
                 if "metadata" in name.lower() and name.endswith(".dat"):
                     info = apk.getinfo(name)
                     print(
-                        f"{Fore.GREEN}Found metadata in APK: {name} ({info.file_size} bytes){Style.RESET_ALL}"
+                        f"{current_theme['success']}Found metadata in APK: {name} ({info.file_size} bytes){Style.RESET_ALL}"
                     )
+                    log_info(f"Found metadata in APK: {name}")
                     return name, info.file_size
     except zipfile.BadZipFile:
-        print(f"{Fore.RED}Error: Invalid APK file{Style.RESET_ALL}")
+        print(f"{current_theme['error']}Error: Invalid APK file{Style.RESET_ALL}")
+        log_error("Invalid APK file")
     except (IOError, OSError) as e:
-        print(f"{Fore.RED}Error reading APK: {e}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}Error reading APK: {e}{Style.RESET_ALL}")
+        log_error(f"Error reading APK: {e}")
     return None
 
 
@@ -428,8 +546,9 @@ def find_metadata_in_folder(folder_path: str) -> Optional[Tuple[str, int]]:
             try:
                 size = os.path.getsize(path)
                 print(
-                    f"{Fore.GREEN}Found metadata in folder: {path} ({size} bytes){Style.RESET_ALL}"
+                    f"{current_theme['success']}Found metadata in folder: {path} ({size} bytes){Style.RESET_ALL}"
                 )
+                log_info(f"Found metadata: {path}")
                 return path, size
             except (IOError, OSError):
                 continue
@@ -442,8 +561,9 @@ def find_metadata_in_folder(folder_path: str) -> Optional[Tuple[str, int]]:
                 try:
                     size = os.path.getsize(path)
                     print(
-                        f"{Fore.GREEN}Found metadata: {path} ({size} bytes){Style.RESET_ALL}"
+                        f"{current_theme['success']}Found metadata: {path} ({size} bytes){Style.RESET_ALL}"
                     )
+                    log_info(f"Found metadata: {path}")
                     return path, size
                 except (IOError, OSError):
                     continue
@@ -451,49 +571,57 @@ def find_metadata_in_folder(folder_path: str) -> Optional[Tuple[str, int]]:
 
 
 def extract_from_apk(input_path: str, output_path: str, force: bool = False) -> bool:
+    log_info(f"Extracting from APK: {input_path} -> {output_path}")
     try:
         is_folder = os.path.isdir(input_path)
         is_apk = os.path.isfile(input_path) and input_path.lower().endswith(".apk")
         if not is_folder and not is_apk:
             print(
-                f"{Fore.RED}Error: {input_path} is not a valid APK file or folder{Style.RESET_ALL}"
+                f"{current_theme['error']}Error: {input_path} is not a valid APK file or folder{Style.RESET_ALL}"
             )
+            log_error(f"Invalid input: {input_path}")
             return False
         data = None
         if is_apk:
             result = find_metadata_in_apk(input_path)
             if not result:
-                print(f"{Fore.YELLOW}No metadata found in APK{Style.RESET_ALL}")
+                print(f"{current_theme['warning']}No metadata found in APK{Style.RESET_ALL}")
+                log_warning("No metadata in APK")
                 return False
             try:
                 with zipfile.ZipFile(input_path, "r") as apk:
                     data = apk.read(result[0])
             except zipfile.BadZipFile:
-                print(f"{Fore.RED}Error: Invalid APK file{Style.RESET_ALL}")
+                print(f"{current_theme['error']}Error: Invalid APK file{Style.RESET_ALL}")
+                log_error("Invalid APK")
                 return False
         else:
             result = find_metadata_in_folder(input_path)
             if not result:
-                print(f"{Fore.YELLOW}No metadata found in folder{Style.RESET_ALL}")
+                print(f"{current_theme['warning']}No metadata found in folder{Style.RESET_ALL}")
+                log_warning("No metadata in folder")
                 return False
             with open(result[0], "rb") as f:
                 data = f.read()
         data, key = try_decrypt_metadata(data)
         if key:
-            print(f"{Fore.GREEN}Auto-decrypted: {key}{Style.RESET_ALL}")
+            print(f"{current_theme['success']}Auto-decrypted: {key}{Style.RESET_ALL}")
+            log_info(f"Auto-decrypted: {key}")
         elif not force and data[:4] != METADATA_MAGIC:
             print(
-                f"{Fore.YELLOW}Metadata appears encrypted. Use --force to extract anyway.{Style.RESET_ALL}"
+                f"{current_theme['warning']}Metadata appears encrypted. Use --force to extract anyway.{Style.RESET_ALL}"
             )
             version, desc = get_metadata_version(data)
-            print(f"{Fore.CYAN}Version detected: {version} ({desc}){Style.RESET_ALL}")
+            print(f"{current_theme['primary']}Version detected: {version} ({desc}){Style.RESET_ALL}")
             return False
         with open(output_path, "wb") as f:
             f.write(data)
-        print(f"{Fore.GREEN}Metadata extracted to {output_path}{Style.RESET_ALL}")
+        print(f"{current_theme['success']}Metadata extracted to {output_path}{Style.RESET_ALL}")
+        log_info(f"Extracted to {output_path}")
         return True
     except (IOError, OSError, zipfile.BadZipFile) as e:
-        print(f"{Fore.RED}Error extracting from APK: {e}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}Error extracting from APK: {e}{Style.RESET_ALL}")
+        log_error(f"Extract error: {e}")
         return False
 
 
@@ -516,9 +644,11 @@ def extract_metadata_pointer(libunity_path: str) -> Optional[int]:
             ]
             data_section = elf.get_section_by_name(".data")
             if not data_section:
-                print(f"{Fore.RED}Error: .data section not found.{Style.RESET_ALL}")
+                print(f"{current_theme['error']}Error: .data section not found.{Style.RESET_ALL}")
+                log_error(".data section not found")
                 return None
-            print(f"{Fore.CYAN}Collecting relocations...{Style.RESET_ALL}")
+            print(f"{current_theme['primary']}Collecting relocations...{Style.RESET_ALL}")
+            log_debug("Collecting relocations")
             relocations = []
             for section in elf.iter_sections():
                 if section.header["sh_type"] not in ("SHT_REL", "SHT_RELA"):
@@ -551,7 +681,7 @@ def extract_metadata_pointer(libunity_path: str) -> Optional[int]:
                         pointer = struct.unpack("<I", libunity.read(4))[0]
                         if pointer != 0:
                             relocations.append(pointer)
-            print(f"{Fore.CYAN}Searching for metadata pointer...{Style.RESET_ALL}")
+            print(f"{current_theme['primary']}Searching for metadata pointer...{Style.RESET_ALL}")
             candidates = []
             for addr in tqdm(relocations, colour="green", unit="rel", leave=False):
                 try:
@@ -563,16 +693,17 @@ def extract_metadata_pointer(libunity_path: str) -> Optional[int]:
                     continue
             if not candidates:
                 print(
-                    f"{Fore.YELLOW}Warning: No metadata pointer found via relocations, trying alternative method...{Style.RESET_ALL}"
+                    f"{current_theme['warning']}Warning: No metadata pointer found via relocations, trying alternative method...{Style.RESET_ALL}"
                 )
                 return extract_metadata_pointer_alternative(libunity_path)
             elif len(candidates) > 1:
                 print(
-                    f"{Fore.YELLOW}Multiple candidates found, using first: {hex(candidates[0])}{Style.RESET_ALL}"
+                    f"{current_theme['warning']}Multiple candidates found, using first: {hex(candidates[0])}{Style.RESET_ALL}"
                 )
             return candidates[0]
     except Exception as e:
-        print(f"{Fore.RED}Error extracting metadata pointer: {e}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}Error extracting metadata pointer: {e}{Style.RESET_ALL}")
+        log_error(f"Pointer extraction error: {e}")
         return None
 
 
@@ -581,27 +712,29 @@ def extract_metadata_pointer_alternative(libunity_path: str) -> Optional[int]:
         with open(libunity_path, "rb") as f:
             data = f.read()
     except (IOError, OSError) as e:
-        print(f"{Fore.RED}Error reading libunity.so: {e}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}Error reading libunity.so: {e}{Style.RESET_ALL}")
+        log_error(f"Read error: {e}")
         return None
-    print(f"{Fore.CYAN}Scanning for metadata magic bytes...{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}Scanning for metadata magic bytes...{Style.RESET_ALL}")
     idx = data.find(METADATA_MAGIC)
     if idx != -1:
-        print(f"{Fore.GREEN}Found metadata at offset: {hex(idx)}{Style.RESET_ALL}")
+        print(f"{current_theme['success']}Found metadata at offset: {hex(idx)}{Style.RESET_ALL}")
         return idx
-    print(f"{Fore.CYAN}Scanning for metadata signature...{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}Scanning for metadata signature...{Style.RESET_ALL}")
     idx = data.find(METADATA_SIGNATURE)
     if idx != -1:
         print(
-            f"{Fore.GREEN}Found metadata signature at offset: {hex(idx)}{Style.RESET_ALL}"
+            f"{current_theme['success']}Found metadata signature at offset: {hex(idx)}{Style.RESET_ALL}"
         )
         return idx
-    print(f"{Fore.RED}Error: No metadata found in libunity.so{Style.RESET_ALL}")
+    print(f"{current_theme['error']}Error: No metadata found in libunity.so{Style.RESET_ALL}")
     return None
 
 
 def extract_metadata(
     libunity_path: str, size: int = 30_000_000
 ) -> Optional[Tuple[bytes, bool]]:
+    log_info(f"Extracting metadata from: {libunity_path}")
     try:
         embedded_offset = find_metadata_in_libunity(libunity_path)
         if embedded_offset is not None:
@@ -610,9 +743,9 @@ def extract_metadata(
                 metadata = f.read(size)
             metadata, key = try_decrypt_metadata(metadata)
             if key:
-                print(f"{Fore.GREEN}Auto-decrypted: {key}{Style.RESET_ALL}")
+                print(f"{current_theme['success']}Auto-decrypted: {key}{Style.RESET_ALL}")
             version, desc = get_metadata_version(metadata)
-            print(f"{Fore.CYAN}Metadata version: {version} ({desc}){Style.RESET_ALL}")
+            print(f"{current_theme['primary']}Metadata version: {version} ({desc}){Style.RESET_ALL}")
             return metadata, True
         metadata_ptr = extract_metadata_pointer(libunity_path)
         if metadata_ptr is None:
@@ -622,7 +755,7 @@ def extract_metadata(
             metadata = libunity.read(size)
         metadata, key = try_decrypt_metadata(metadata)
         if key:
-            print(f"{Fore.GREEN}Auto-decrypted: {key}{Style.RESET_ALL}")
+            print(f"{current_theme['success']}Auto-decrypted: {key}{Style.RESET_ALL}")
         is64bit = True
         index = metadata.find(METADATA_MARKER_64)
         if index == -1:
@@ -633,18 +766,19 @@ def extract_metadata(
             if index > 0 and index <= len(metadata):
                 metadata = metadata[:index]
             print(
-                f"{Fore.GREEN}Metadata end marker found ({'64-bit' if is64bit else '32-bit'}).{Style.RESET_ALL}"
+                f"{current_theme['success']}Metadata end marker found ({'64-bit' if is64bit else '32-bit'}).{Style.RESET_ALL}"
             )
         else:
             print(
-                f"{Fore.RED}Warning: End marker not found, using full dump.{Style.RESET_ALL}"
+                f"{current_theme['error']}Warning: End marker not found, using full dump.{Style.RESET_ALL}"
             )
         version, desc = get_metadata_version(metadata)
-        print(f"{Fore.CYAN}Metadata version: {version} ({desc}){Style.RESET_ALL}")
-        print(f"{Fore.CYAN}Metadata size: {len(metadata)} bytes{Style.RESET_ALL}")
+        print(f"{current_theme['primary']}Metadata version: {version} ({desc}){Style.RESET_ALL}")
+        print(f"{current_theme['primary']}Metadata size: {len(metadata)} bytes{Style.RESET_ALL}")
         return metadata, is64bit
     except (IOError, OSError, struct.error) as e:
-        print(f"{Fore.RED}Error extracting metadata: {e}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}Error extracting metadata: {e}{Style.RESET_ALL}")
+        log_error(f"Extract error: {e}")
         return None
 
 
@@ -690,7 +824,9 @@ def apply_heuristic(
 ) -> Tuple[Optional[Tuple[int, int, bytes]], List[Tuple[int, int]]]:
     found = []
     remaining = offsets_to_sizes.copy()
-    for offset, size in offsets_to_sizes:
+    for offset, size in tqdm(
+        offsets_to_sizes, desc=f"Scanning {name}", colour="green", leave=False
+    ):
         data = metadata[offset : offset + size]
         if marker and marker in data:
             found.append((offset, size, data))
@@ -710,56 +846,57 @@ def apply_heuristic(
         if callback and callback(entries):
             found.append((offset, size, data))
     if not found:
-        print(f"{Fore.RED + Style.BRIGHT}Failed heuristic: {name}{Style.RESET_ALL}")
+        print(f"{current_theme['error'] + Style.BRIGHT}Failed heuristic: {name}{Style.RESET_ALL}")
         return None, offsets_to_sizes
     found.sort(key=lambda x: x[1], reverse=not prefer_lowest)
     result = found[0]
     if result[:2] in remaining:
         remaining.remove(result[:2])
-    print(f"{Fore.CYAN}Found {name} at offset {result[0]}{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}Found {name} at offset {result[0]}{Style.RESET_ALL}")
+    log_debug(f"Found {name} at {result[0]}")
     return result, remaining
 
 
 def decrypt_metadata(
     metadata: bytes, output_path: str, exclude_offsets: Optional[str] = None
 ) -> bool:
+    log_info(f"Decrypting metadata to: {output_path}")
     try:
-        print(f"{Fore.GREEN}Starting metadata decryption...{Style.RESET_ALL}")
+        print(f"{current_theme['success']}Starting metadata decryption...{Style.RESET_ALL}")
         metadata, key = try_decrypt_metadata(metadata)
         if key:
-            print(f"{Fore.GREEN}Auto-decrypted: {key}{Style.RESET_ALL}")
+            print(f"{current_theme['success']}Auto-decrypted: {key}{Style.RESET_ALL}")
         else:
             print(
-                f"{Fore.CYAN}Metadata is not encrypted or uses unknown encryption{Style.RESET_ALL}"
+                f"{current_theme['primary']}Metadata is not encrypted or uses unknown encryption{Style.RESET_ALL}"
             )
         version, desc = get_metadata_version(metadata)
-        print(f"{Fore.CYAN}Metadata version: {version} ({desc}){Style.RESET_ALL}")
+        print(f"{current_theme['primary']}Metadata version: {version} ({desc}){Style.RESET_ALL}")
         if version < 15 or version > 43:
             print(
-                f"{Fore.YELLOW}Warning: Unknown metadata version {version}{Style.RESET_ALL}"
+                f"{current_theme['warning']}Warning: Unknown metadata version {version}{Style.RESET_ALL}"
             )
         elif version > 38:
             print(
-                f"{Fore.YELLOW}Warning: Version {version} may have limited support{Style.RESET_ALL}"
+                f"{current_theme['warning']}Warning: Version {version} may have limited support{Style.RESET_ALL}"
             )
-        script_dir = os.path.dirname(os.path.abspath(__file__))
         debug_path = os.path.join(script_dir, "debug-metadata.bin")
         with open(debug_path, "wb") as f:
             f.write(metadata)
-        print(f"{Fore.CYAN}Debug dump saved to {debug_path}{Style.RESET_ALL}")
+        print(f"{current_theme['primary']}Debug dump saved to {debug_path}{Style.RESET_ALL}")
         offset_candidates = find_offset_candidates(metadata)
         print(
-            f"{Fore.CYAN}Found {len(offset_candidates)} offset candidates{Style.RESET_ALL}"
+            f"{current_theme['primary']}Found {len(offset_candidates)} offset candidates{Style.RESET_ALL}"
         )
         if exclude_offsets:
             for excluded in exclude_offsets.split(","):
                 try:
                     todelete = int(excluded)
                     offset_candidates.remove(todelete)
-                    print(f"{Fore.CYAN}Excluded offset {todelete}{Style.RESET_ALL}")
+                    print(f"{current_theme['primary']}Excluded offset {todelete}{Style.RESET_ALL}")
                 except (ValueError, KeyError):
                     print(
-                        f"{Fore.YELLOW}Offset {todelete} not found in candidates{Style.RESET_ALL}"
+                        f"{current_theme['warning']}Offset {todelete} not found in candidates{Style.RESET_ALL}"
                     )
         offsets_to_sizes: List[Tuple[int, int]] = []
         only_sizes = [
@@ -789,7 +926,7 @@ def decrypt_metadata(
                             break
         offsets_to_sizes = sorted(offsets_to_sizes, key=lambda x: x[0])
         print(
-            f"{Fore.CYAN}Validated {len(offsets_to_sizes)} offset/size pairs{Style.RESET_ALL}"
+            f"{current_theme['primary']}Validated {len(offsets_to_sizes)} offset/size pairs{Style.RESET_ALL}"
         )
         reconstructed = bytearray(METADATA_HEADER_MAGIC + b"\x00" * 244)
         reconstructed_offsets = []
@@ -867,7 +1004,9 @@ def decrypt_metadata(
             ("unresolvedIndirectCallParameterTypeRanges", None, "<II", False, None),
             ("exportedTypeDefinitions", None, "<I", False, None),
         ]
-        for h_name, h_cb, h_sig, h_pref, h_marker in heuristics:
+        for h_name, h_cb, h_sig, h_pref, h_marker in tqdm(
+            heuristics, desc="Applying heuristics", colour="green"
+        ):
             result, offsets_to_sizes = apply_heuristic(
                 h_name, offsets_to_sizes, metadata, h_cb, h_sig, h_pref, h_marker
             )
@@ -875,7 +1014,7 @@ def decrypt_metadata(
                 reconstructed_offsets.append(result[0])
         if len(reconstructed_offsets) < 28:
             print(
-                f"{Fore.YELLOW}Warning: Only found {len(reconstructed_offsets)} sections (expected 29){Style.RESET_ALL}"
+                f"{current_theme['warning']}Warning: Only found {len(reconstructed_offsets)} sections (expected 29){Style.RESET_ALL}"
             )
         pos = 0
 
@@ -912,43 +1051,46 @@ def decrypt_metadata(
             output_path = os.path.join(output_path, "output-metadata.dat")
         with open(output_path, "wb") as f:
             f.write(reconstructed)
-        print(f"{Fore.MAGENTA + Style.BRIGHT}Output: {output_path}{Style.RESET_ALL}")
-        print(f"{Fore.GREEN}Metadata decrypted successfully!{Style.RESET_ALL}")
+        print(f"{current_theme['accent'] + Style.BRIGHT}Output: {output_path}{Style.RESET_ALL}")
+        print(f"{current_theme['success']}Metadata decrypted successfully!{Style.RESET_ALL}")
+        log_info(f"Decrypted to {output_path}")
         return True
     except (IOError, OSError, struct.error) as e:
-        print(f"{Fore.RED}Error decrypting metadata: {e}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}Error decrypting metadata: {e}{Style.RESET_ALL}")
+        log_error(f"Decrypt error: {e}")
         return False
 
 
 def print_menu():
     print()
-    print(f"{Fore.CYAN}╔{'═'*54}╗{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {Fore.GREEN}1{Style.RESET_ALL}. {i18n.get('menu_extract'):<46}{Fore.CYAN}║{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {Fore.GREEN}2{Style.RESET_ALL}. {i18n.get('menu_decrypt'):<46}{Fore.CYAN}║{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {Fore.GREEN}3{Style.RESET_ALL}. {i18n.get('menu_info'):<46}{Fore.CYAN}║{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {Fore.GREEN}4{Style.RESET_ALL}. {i18n.get('menu_apk'):<46}{Fore.CYAN}║{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {Fore.YELLOW}5{Style.RESET_ALL}. {i18n.get('menu_switch_lang'):<46}{Fore.CYAN}║{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {Fore.RED}0{Style.RESET_ALL}. {i18n.get('menu_exit'):<46}{Fore.CYAN}║{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}╚{'═'*54}╝{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}╔{'═'*62}╗{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}║{Style.RESET_ALL}  {current_theme['success']}1{Style.RESET_ALL}. {i18n.get('menu_extract'):<57}{current_theme['primary']}║{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}║{Style.RESET_ALL}  {current_theme['success']}2{Style.RESET_ALL}. {i18n.get('menu_decrypt'):<57}{current_theme['primary']}║{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}║{Style.RESET_ALL}  {current_theme['success']}3{Style.RESET_ALL}. {i18n.get('menu_info'):<57}{current_theme['primary']}║{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}║{Style.RESET_ALL}  {current_theme['success']}4{Style.RESET_ALL}. {i18n.get('menu_apk'):<57}{current_theme['primary']}║{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}║{Style.RESET_ALL}  {current_theme['warning']}5{Style.RESET_ALL}. {i18n.get('menu_switch_lang'):<57}{current_theme['primary']}║{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}║{Style.RESET_ALL}  {current_theme['warning']}6{Style.RESET_ALL}. {i18n.get('menu_theme'):<57}{current_theme['primary']}║{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}║{Style.RESET_ALL}  {current_theme['error']}0{Style.RESET_ALL}. {i18n.get('menu_exit'):<57}{current_theme['primary']}║{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}╚{'═'*62}╝{Style.RESET_ALL}")
 
 
 def menu_extract():
     clear_screen()
-    print(f"\n{Fore.CYAN}╔{'═'*54}╗{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {i18n.get('extract_title'):^48}{Fore.CYAN}║{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}╚{'═'*54}╝{Style.RESET_ALL}")
+    print(f"\n{current_theme['primary']}╔{'═'*58}╗{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}║{Style.RESET_ALL}  {i18n.get('extract_title'):^52}{current_theme['primary']}║{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}╚{'═'*58}╝{Style.RESET_ALL}")
     libunity = select_file(
         i18n.get("select_libunity"), [("SO files", ".so"), ("All files", ".*")]
     )
     if not libunity:
-        print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
         return
     print(f"{i18n.get('libunity')}{libunity}")
     output = select_save_file(
         i18n.get("save_metadata"), [("DAT files", ".dat"), ("All files", ".*")], ".dat"
     )
     if not output:
-        print(f"{Fore.RED}{i18n.get('no_output_path')}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}{i18n.get('no_output_path')}{Style.RESET_ALL}")
         return
     try:
         size = input(i18n.get("max_size")).strip()
@@ -960,26 +1102,26 @@ def menu_extract():
         metadata, _ = result
         with open(output, "wb") as f:
             f.write(metadata)
-        print(f"{Fore.GREEN}{i18n.get('extracted_to')}{output}{Style.RESET_ALL}")
+        print(f"{current_theme['success']}{i18n.get('extracted_to')}{output}{Style.RESET_ALL}")
 
 
 def menu_decrypt():
     clear_screen()
-    print(f"\n{Fore.CYAN}╔{'═'*54}╗{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {i18n.get('decrypt_title'):^48}{Fore.CYAN}║{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}╚{'═'*54}╝{Style.RESET_ALL}")
+    print(f"\n{current_theme['primary']}╔{'═'*58}╗{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}║{Style.RESET_ALL}  {i18n.get('decrypt_title'):^52}{current_theme['primary']}║{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}╚{'═'*58}╝{Style.RESET_ALL}")
     input_file = select_file(
         i18n.get("select_encrypted"), [("DAT files", ".dat"), ("All files", ".*")]
     )
     if not input_file:
-        print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
         return
     print(f"{i18n.get('input')}{input_file}")
     output = select_save_file(
         i18n.get("save_decrypted"), [("DAT files", ".dat"), ("All files", ".*")], ".dat"
     )
     if not output:
-        print(f"{Fore.RED}{i18n.get('no_output_path')}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}{i18n.get('no_output_path')}{Style.RESET_ALL}")
         return
     try:
         exclude = input("Exclude offsets (e.g., 1,2,3 or empty): ").strip() or None
@@ -987,53 +1129,53 @@ def menu_decrypt():
             metadata = f.read()
         decrypt_metadata(metadata, output, exclude)
     except Exception as e:
-        print(f"{Fore.RED}{i18n.get('error')}{e}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}{i18n.get('error')}{e}{Style.RESET_ALL}")
 
 
 def menu_info():
     clear_screen()
-    print(f"\n{Fore.CYAN}╔{'═'*54}╗{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {i18n.get('info_title'):^48}{Fore.CYAN}║{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}╚{'═'*54}╝{Style.RESET_ALL}")
+    print(f"\n{current_theme['primary']}╔{'═'*58}╗{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}║{Style.RESET_ALL}  {i18n.get('info_title'):^52}{current_theme['primary']}║{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}╚{'═'*58}╝{Style.RESET_ALL}")
     input_file = select_file(
         i18n.get("select_metadata"), [("DAT files", ".dat"), ("All files", ".*")]
     )
     if not input_file:
-        print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
         return
     print(f"{i18n.get('file')}{input_file}")
     try:
         with open(input_file, "rb") as f:
             data = f.read(512)
-        print(f"\n{Fore.CYAN}╔{'═'*54}╗{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}║{Style.RESET_ALL}  {i18n.get('metadata_info_title'):^48}{Fore.CYAN}║{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}╚{'═'*54}╝{Style.RESET_ALL}")
+        print(f"\n{current_theme['primary']}╔{'═'*58}╗{Style.RESET_ALL}")
+        print(f"{current_theme['primary']}║{Style.RESET_ALL}  {i18n.get('metadata_info_title'):^52}{current_theme['primary']}║{Style.RESET_ALL}")
+        print(f"{current_theme['primary']}╚{'═'*58}╝{Style.RESET_ALL}")
         print(f"{i18n.get('magic')}{data[:4].hex().upper()}")
         version, desc = get_metadata_version(data)
         print(f"{i18n.get('version')}{version} ({desc})")
         print(f"{i18n.get('file_size')}{os.path.getsize(input_file)} bytes")
         if data[:4] != METADATA_MAGIC:
-            print(f"{Fore.YELLOW}{i18n.get('warning_invalid_magic')}{Style.RESET_ALL}")
+            print(f"{current_theme['warning']}{i18n.get('warning_invalid_magic')}{Style.RESET_ALL}")
         decrypted, key = try_decrypt_metadata(data)
         if key:
             print(
-                f"{Fore.GREEN}{i18n.get('possible_encryption')}{key}{Style.RESET_ALL}"
+                f"{current_theme['success']}{i18n.get('possible_encryption')}{key}{Style.RESET_ALL}"
             )
     except Exception as e:
-        print(f"{Fore.RED}{i18n.get('error')}{e}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}{i18n.get('error')}{e}{Style.RESET_ALL}")
 
 
 def menu_apk():
     clear_screen()
-    print(f"\n{Fore.CYAN}╔{'═'*54}╗{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {i18n.get('apk_title'):^48}{Fore.CYAN}║{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}╚{'═'*54}╝{Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}{i18n.get('apk_select')}{Style.RESET_ALL}")
+    print(f"\n{current_theme['primary']}╔{'═'*58}╗{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}║{Style.RESET_ALL}  {i18n.get('apk_title'):^52}{current_theme['primary']}║{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}╚{'═'*58}╝{Style.RESET_ALL}")
+    print(f"{current_theme['warning']}{i18n.get('apk_select')}{Style.RESET_ALL}")
     input_path = select_file(
         i18n.get("select_apk"), [("APK files", ".apk"), ("All files", ".*")]
     )
     if not input_path:
-        print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
         return
     if os.path.isdir(input_path):
         print(f"{i18n.get('folder')}{input_path}")
@@ -1043,7 +1185,7 @@ def menu_apk():
         i18n.get("save_metadata"), [("DAT files", ".dat"), ("All files", ".*")], ".dat"
     )
     if not output:
-        print(f"{Fore.RED}{i18n.get('no_output_path')}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}{i18n.get('no_output_path')}{Style.RESET_ALL}")
         return
     try:
         force = input(i18n.get("force_extract")).strip().lower() == "y"
@@ -1052,21 +1194,45 @@ def menu_apk():
     try:
         extract_from_apk(input_path, output, force)
     except Exception as e:
-        print(f"{Fore.RED}{i18n.get('error')}{e}{Style.RESET_ALL}")
+        print(f"{current_theme['error']}{i18n.get('error')}{e}{Style.RESET_ALL}")
+
+
+def menu_theme():
+    global current_theme
+    clear_screen()
+    print(f"\n{current_theme['primary']}╔{'═'*58}╗{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}║{Style.RESET_ALL}  {'Select Theme':^52}{current_theme['primary']}║{Style.RESET_ALL}")
+    print(f"{current_theme['primary']}╚{'═'*58}╝{Style.RESET_ALL}")
+    print()
+    themes = list(THEMES.keys())
+    for i, name in enumerate(themes, 1):
+        print(f"  {i}. {name.capitalize()}")
+    print(f"  0. Cancel")
+    try:
+        choice = input(f"\n{current_theme['primary']}Select: {Style.RESET_ALL}").strip()
+        if choice.isdigit() and 1 <= int(choice) <= len(themes):
+            theme_name = themes[int(choice) - 1]
+            config["theme"] = theme_name
+            current_theme = THEMES[theme_name]
+            save_config()
+            print(f"{current_theme['success']}Theme changed to {theme_name}{Style.RESET_ALL}")
+    except (EOFError, ValueError):
+        pass
 
 
 def interactive_menu():
     clear_screen()
     print(Fore.CYAN + BANNER + Style.RESET_ALL)
     loading_animation()
+    check_for_updates()
     while True:
         print_menu()
         try:
             choice = input(
-                f"{Fore.CYAN}{i18n.get('select_option')}{Style.RESET_ALL}: "
+                f"{current_theme['primary']}{i18n.get('select_option')}{Style.RESET_ALL}: "
             ).strip()
         except EOFError:
-            print(f"\n{Fore.GREEN}{i18n.get('exiting')}{Style.RESET_ALL}")
+            print(f"\n{current_theme['success']}{i18n.get('exiting')}{Style.RESET_ALL}")
             break
         if choice == "1":
             menu_extract()
@@ -1078,16 +1244,21 @@ def interactive_menu():
             menu_apk()
         elif choice == "5":
             lang = i18n.toggle_language()
+            config["language"] = lang
+            save_config()
             print(
-                f"{Fore.GREEN}{i18n.get('lang_changed')}{lang.upper()}{Style.RESET_ALL}"
+                f"{current_theme['success']}{i18n.get('lang_changed')}{lang.upper()}{Style.RESET_ALL}"
             )
+        elif choice == "6":
+            menu_theme()
         elif choice == "0":
-            print(f"{Fore.GREEN}{i18n.get('exiting')}{Style.RESET_ALL}")
+            print(f"{current_theme['success']}{i18n.get('exiting')}{Style.RESET_ALL}")
+            log_info("Application exited")
             break
         else:
-            print(f"{Fore.RED}{i18n.get('invalid_option')}{Style.RESET_ALL}")
+            print(f"{current_theme['error']}{i18n.get('invalid_option')}{Style.RESET_ALL}")
         try:
-            input(f"\n{Fore.CYAN}{i18n.get('press_enter')}{Style.RESET_ALL}")
+            input(f"\n{current_theme['primary']}{i18n.get('press_enter')}{Style.RESET_ALL}")
         except EOFError:
             break
         clear_screen()
@@ -1095,6 +1266,9 @@ def interactive_menu():
 
 
 def main():
+    setup_logging()
+    load_config()
+    log_info(f"Application started, version {VERSION}")
     parser = argparse.ArgumentParser(
         prog="Metadata-Worker", description="IL2CPP Metadata Tool"
     )
@@ -1126,46 +1300,51 @@ def main():
     if args.command and args.command != "menu":
         print(Fore.CYAN + BANNER + Style.RESET_ALL)
         loading_animation()
+        check_for_updates()
     if args.command == "extract":
         if not os.path.isfile(args.libunity):
-            print(f"{Fore.RED}Error: {args.libunity} not found{Style.RESET_ALL}")
+            print(f"{current_theme['error']}Error: {args.libunity} not found{Style.RESET_ALL}")
+            log_error(f"File not found: {args.libunity}")
             sys.exit(1)
         result = extract_metadata(args.libunity, args.size)
         if result:
             metadata, _ = result
             with open(args.output, "wb") as f:
                 f.write(metadata)
-            print(f"{Fore.GREEN}Metadata extracted to {args.output}{Style.RESET_ALL}")
+            print(f"{current_theme['success']}Metadata extracted to {args.output}{Style.RESET_ALL}")
     elif args.command == "decrypt":
         if not os.path.isfile(args.input):
-            print(f"{Fore.RED}Error: {args.input} not found{Style.RESET_ALL}")
+            print(f"{current_theme['error']}Error: {args.input} not found{Style.RESET_ALL}")
+            log_error(f"File not found: {args.input}")
             sys.exit(1)
         with open(args.input, "rb") as f:
             metadata = f.read()
         decrypt_metadata(metadata, args.output, args.exclude)
     elif args.command == "info":
         if not os.path.isfile(args.input):
-            print(f"{Fore.RED}Error: {args.input} not found{Style.RESET_ALL}")
+            print(f"{current_theme['error']}Error: {args.input} not found{Style.RESET_ALL}")
+            log_error(f"File not found: {args.input}")
             sys.exit(1)
         with open(args.input, "rb") as f:
             data = f.read(512)
-        print(f"\n{Fore.CYAN}╔{'═'*54}╗{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}║{Style.RESET_ALL}  {'Metadata Info':^48}{Fore.CYAN}║{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}╚{'═'*54}╝{Style.RESET_ALL}")
+        print(f"\n{current_theme['primary']}╔{'═'*58}╗{Style.RESET_ALL}")
+        print(f"{current_theme['primary']}║{Style.RESET_ALL}  {'Metadata Info':^52}{current_theme['primary']}║{Style.RESET_ALL}")
+        print(f"{current_theme['primary']}╚{'═'*58}╝{Style.RESET_ALL}")
         print(f"Magic: {data[:4].hex().upper()}")
         version, desc = get_metadata_version(data)
         print(f"Version: {version} ({desc})")
         print(f"File size: {os.path.getsize(args.input)} bytes")
         if data[:4] != METADATA_MAGIC:
             print(
-                f"{Fore.YELLOW}Warning: Invalid magic bytes - file may be encrypted{Style.RESET_ALL}"
+                f"{current_theme['warning']}Warning: Invalid magic bytes - file may be encrypted{Style.RESET_ALL}"
             )
             decrypted, key = try_decrypt_metadata(data)
             if key:
-                print(f"{Fore.GREEN}Possible encryption key: {key}{Style.RESET_ALL}")
+                print(f"{current_theme['success']}Possible encryption key: {key}{Style.RESET_ALL}")
     elif args.command == "apk":
         if not os.path.exists(args.input):
-            print(f"{Fore.RED}Error: {args.input} not found{Style.RESET_ALL}")
+            print(f"{current_theme['error']}Error: {args.input} not found{Style.RESET_ALL}")
+            log_error(f"File not found: {args.input}")
             sys.exit(1)
         extract_from_apk(args.input, args.output, args.force)
     elif args.command == "menu":
