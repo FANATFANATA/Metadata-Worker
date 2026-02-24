@@ -1,3 +1,4 @@
+# noinspection PyDictDuplicateKeys
 LANGUAGES = {
     "en": {
         "banner": """
