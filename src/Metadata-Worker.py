@@ -11,133 +11,29 @@ from pathlib import Path
 try:
     import tkinter as tk
     from tkinter import filedialog
+
     TKINTER_AVAILABLE = True
 except ImportError:
     TKINTER_AVAILABLE = False
-
 from tqdm import tqdm
 from colorama import Fore, Style, init as colorama_init
 from elftools.elf.elffile import ELFFile
 
-if getattr(sys, 'frozen', False):
+if getattr(sys, "frozen", False):
     script_dir = os.path.dirname(sys.executable)
 else:
     script_dir = os.path.dirname(os.path.abspath(__file__))
 if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
-
 import i18n
 
 colorama_init(autoreset=True)
-
 BANNER = i18n.get("banner")
-
-FRIDA_SCRIPT_TEMPLATE = """Interceptor.attach(Module.findExportByName(null, 'dlopen'), {{
-    onEnter: function(args) {{
-        this.path = args[0].readUtf8String();
-    }},
-    onLeave: function(retval) {{
-        if(this.path.indexOf('libil2cpp.so') !== -1) {{
-            var il2cpp = Module.findBaseAddress('libil2cpp.so');
-            console.error('[!] il2cpp : ' + il2cpp);
-            var LoadMetaDataFile = il2cpp.add({offset});
-            Interceptor.attach(LoadMetaDataFile, {{
-                onLeave: function(retval) {{
-                    console.error('[!] LoadMetaDataFile retval : ' + retval);
-                }}
-            }});
-        }}
-    }}
-}});
-"""
-
-FRIDA_MEMORY_DUMP_SCRIPT = """
-let metadataSize = 0;
-let metadataPtr = 0;
-
-function findPattern(pattern) {{
-    const patternBytes = pattern.split(' ').map(b => b === '?' ? null : parseInt(b, 16));
-    const ranges = Process.enumerateRanges('r--');
-    for (const range of ranges) {{
-        try {{
-            const memory = Memory.readByteArray(range.base, range.size);
-            if (!memory) continue;
-            const bytes = new Uint8Array(memory);
-            for (let i = 0; i <= bytes.length - patternBytes.length; i++) {{
-                let match = true;
-                for (let j = 0; j < patternBytes.length; j++) {{
-                    if (patternBytes[j] !== null && bytes[i + j] !== patternBytes[j]) {{
-                        match = false;
-                        break;
-                    }}
-                }}
-                if (match) {{
-                    return range.base.add(i);
-                }}
-            }}
-        }} catch (e) {{}}
-    }}
-    return null;
-}}
-
-function dumpMetadata(ptr, size, packageName) {{
-    const path = `/data/local/tmp/${{packageName}}_global-metadata.dat`;
-    const file = new File(path, 'wb');
-    file.write(Memory.readByteArray(ptr, size));
-    file.flush();
-    file.close();
-    console.log(`[+] Dumped to ${{path}}`);
-    console.log(`[+] Size: ${{size}} bytes`);
-}}
-
-rpc.exports = {{
-    start: function(offset, size, pattern, packageName) {{
-        console.log('[*] Starting metadata dump...');
-
-        if (offset) {{
-            const func = Module.getBaseAddress('libil2cpp.so').add(offset);
-            try {{
-                const ret = new NativeFunction(func, 'pointer', []);
-                metadataPtr = ret();
-                metadataSize = size || 0;
-                console.log(`[*] Using offset: 0x${{offset.toString(16)}}`);
-            }} catch (e) {{
-                console.error(`[-] Failed to call function at offset: ${{e}}`);
-                return;
-            }}
-        }} else {{
-            const scan = findPattern(pattern || "af 1b b1 fa 1? 00 00 00 00");
-            if (scan) {{
-                metadataPtr = scan.readPointer();
-                metadataSize = size || 0;
-                console.log(`[*] Found metadata pointer at: ${{scan}}`);
-            }} else {{
-                console.error('[-] Metadata not found via pattern scan');
-                return;
-            }}
-        }}
-
-        if (metadataPtr.isNull()) {{
-            console.error('[-] Metadata pointer is null');
-            return;
-        }}
-
-        if (metadataSize === 0) {{
-            metadataSize = metadataPtr.readU32();
-            console.log(`[*] Detected metadata size: ${{metadataSize}}`);
-        }}
-
-        dumpMetadata(metadataPtr, metadataSize, packageName);
-    }}
-}};
-"""
-
 METADATA_MAGIC = b"\xaf\x1b\xb1\xfa"
 METADATA_MARKER_64 = b"\x15\x00\x0c\x0c\x10\x1b\x23\x00\x00\x00\x00\x00\x28\x00\x2c\x10"
 METADATA_MARKER_32 = b"\x00\x01\x01\x02\x01\x02\x02\x03"
 METADATA_SIGNATURE = b"\x02\x00\x00\x00\x7c\x00\x00\x06\x0b\x00\x00\x00\x02\x00\x00\x00"
 METADATA_HEADER_MAGIC = b"\xaf\x1b\xb1\xfa\x1f\x00\x00\x00\x00\x01\x00\x00"
-
 SUPPORTED_VERSIONS = {
     15: "Unity 2015",
     16: "Unity 2017",
@@ -169,7 +65,6 @@ SUPPORTED_VERSIONS = {
     42: "Unity 2025.3 (experimental)",
     43: "Unity 2026+ (experimental)",
 }
-
 COMMON_XOR_KEYS = [
     [0x77, 0x61, 0x6E, 0x7A, 0x67],
     [0x77, 0x61, 0x6E, 0x27, 0x7A, 0x67],
@@ -207,7 +102,7 @@ def select_file_cli(title: str) -> str:
             path = input(i18n.get("path_to_file")).strip()
         except EOFError:
             return ""
-        if path.lower() == 'q':
+        if path.lower() == "q":
             return ""
         if os.path.isfile(path):
             return path
@@ -221,7 +116,7 @@ def select_save_file_cli(title: str, defaultextension: str = "") -> str:
             path = input(i18n.get("path_to_save")).strip()
         except EOFError:
             return ""
-        if path.lower() == 'q':
+        if path.lower() == "q":
             return ""
         if path:
             if defaultextension and not path.endswith(defaultextension):
@@ -237,7 +132,7 @@ def select_folder_cli(title: str) -> str:
             path = input(i18n.get("path_to_folder")).strip()
         except EOFError:
             return ""
-        if path.lower() == 'q':
+        if path.lower() == "q":
             return ""
         if os.path.isdir(path):
             return path
@@ -268,7 +163,9 @@ def select_save_file(title: str, filetypes: list, defaultextension: str = "") ->
             root = tk.Tk()
             root.withdraw()
             root.attributes("-topmost", True)
-            file_path = filedialog.asksaveasfilename(title=title, filetypes=filetypes, defaultextension=defaultextension)
+            file_path = filedialog.asksaveasfilename(
+                title=title, filetypes=filetypes, defaultextension=defaultextension
+            )
             return file_path
         except tk.TclError:
             pass
@@ -341,8 +238,22 @@ def decrypt_xxtea(data: bytes, key: bytes) -> bytes:
         v = list(struct.unpack_from("<II", out, i))
         sum_val = (delta * 32) & 0xFFFFFFFF
         for _ in range(32):
-            v[1] = (v[1] - (((v[0] << 4) + v[0]) ^ (v[0] + sum_val) ^ ((v[0] >> 5) + key[(sum_val >> 11) & (key_idx - 1)]))) & 0xFFFFFFFF
-            v[0] = (v[0] - (((v[1] << 4) + v[1]) ^ (v[1] + sum_val) ^ ((v[1] >> 5) + key[sum_val & (key_idx - 1)]))) & 0xFFFFFFFF
+            v[1] = (
+                v[1]
+                - (
+                    ((v[0] << 4) + v[0])
+                    ^ (v[0] + sum_val)
+                    ^ ((v[0] >> 5) + key[(sum_val >> 11) & (key_idx - 1)])
+                )
+            ) & 0xFFFFFFFF
+            v[0] = (
+                v[0]
+                - (
+                    ((v[1] << 4) + v[1])
+                    ^ (v[1] + sum_val)
+                    ^ ((v[1] >> 5) + key[sum_val & (key_idx - 1)])
+                )
+            ) & 0xFFFFFFFF
             sum_val = (sum_val - delta) & 0xFFFFFFFF
         struct.pack_into("<II", out, i, v[0], v[1])
     return bytes(out)
@@ -419,113 +330,48 @@ def decrypt_striped_xor(data: bytes, key: int = 0xA3, stripe: int = 0x1000) -> b
 def try_decrypt_metadata(data: bytes) -> Tuple[bytes, Optional[str]]:
     if is_valid_metadata(data):
         return data, None
-
     key = auto_header_xor_key(data)
     if key:
         decrypted = decrypt_xor(data, key)
         if is_valid_metadata(decrypted):
             return decrypted, f"HEADER-XOR:{key}"
-
     key = auto_wanzg_key(data)
     if key:
         decrypted = decrypt_xor(data, key)
         if is_valid_metadata(decrypted):
             return decrypted, f"WANZG:{key}"
-
     key = auto_find_xor_key(data)
     if key:
         decrypted = decrypt_xor(data, key)
         if is_valid_metadata(decrypted):
             return decrypted, f"AUTO-XOR:{key}"
-
     decrypted = decrypt_striped_xor(data)
     if is_valid_metadata(decrypted):
         return decrypted, "STRIPED-XOR-0xA3"
-
     decrypted = decrypt_striped_xor(data, 0x53)
     if is_valid_metadata(decrypted):
         return decrypted, "STRIPED-XOR-0x53"
-
     for key in COMMON_XOR_KEYS:
         decrypted = decrypt_xor(data, key)
         if is_valid_metadata(decrypted):
             return decrypted, f"XOR:{key}"
-
     for key_len in [4, 8, 16, 32]:
         test_key = list(data[:key_len])
         decrypted = decrypt_xor(data, test_key)
         if is_valid_metadata(decrypted):
             return decrypted, f"XOR:{test_key}"
-
     decrypted = decrypt_rc4(data)
     if is_valid_metadata(decrypted):
         return decrypted, "RC4"
-
     for rc4_key in [b"NEP2", b"Tarkov", b"wanzg"]:
         decrypted = decrypt_rc4(data, rc4_key)
         if is_valid_metadata(decrypted):
             return decrypted, f"RC4-{rc4_key.decode()}"
-
     for key in [b"\x00" * 16, b"\xff" * 16, b"\x12\x34\x56\x78\x9a\xbc\xde\xf0" * 2]:
         decrypted = decrypt_xxtea(data, key)
         if is_valid_metadata(decrypted):
             return decrypted, f"XXTEA:{key.hex()}"
-
     return data, None
-
-
-def compare_metadata_files(file1: str, file2: str, bytes_count: int = 10) -> bool:
-    if not os.path.isfile(file1):
-        print(f"{Fore.RED}{i18n.get('file_not_exist')}{file1}{i18n.get('does_not_exist')}{Style.RESET_ALL}")
-        return False
-    if not os.path.isfile(file2):
-        print(f"{Fore.RED}{i18n.get('file_not_exist')}{file2}{i18n.get('does_not_exist')}{Style.RESET_ALL}")
-        return False
-
-    with open(file1, "rb") as f1, open(file2, "rb") as f2:
-        data1 = f1.read(bytes_count)
-        data2 = f2.read(bytes_count)
-
-    print(f"\n{Fore.CYAN}{i18n.get('bytes_hex')}{file1}:{Style.RESET_ALL} " + " ".join(f"{b:02x}" for b in data1))
-    print(f"{Fore.CYAN}{i18n.get('bytes_hex')}{file2}:{Style.RESET_ALL} " + " ".join(f"{b:02x}" for b in data2))
-
-    with open(file1, "rb") as f1:
-        full1 = f1.read(8)
-    with open(file2, "rb") as f2:
-        full2 = f2.read(8)
-
-    v1, desc1 = get_metadata_version(full1) if full1[:4] == METADATA_MAGIC else (-1, "Invalid")
-    v2, desc2 = get_metadata_version(full2) if full2[:4] == METADATA_MAGIC else (-1, "Invalid")
-    print(f"\n{Fore.CYAN}{file1}: Version {v1} ({desc1}){Style.RESET_ALL}")
-    print(f"{Fore.CYAN}{file2}: Version {v2} ({desc2}){Style.RESET_ALL}")
-
-    if data1 == data2:
-        print(f"{Fore.GREEN}{i18n.get('bytes_identical')}{bytes_count}{i18n.get('bytes_identical_end')}{Style.RESET_ALL}")
-        return True
-    else:
-        different = [i + 1 for i in range(bytes_count) if data1[i] != data2[i]]
-        print(f"{Fore.YELLOW}{i18n.get('bytes_different')}{different}{i18n.get('are_different')}{different}{Style.RESET_ALL}")
-        return False
-
-
-def generate_frida_script(offset: str, output_path: Optional[str] = None) -> str:
-    if not offset.startswith("0x"):
-        offset = f"0x{offset}"
-    script = FRIDA_SCRIPT_TEMPLATE.format(offset=offset)
-    if output_path:
-        with open(output_path, "w") as f:
-            f.write(script)
-        print(f"{Fore.GREEN}Frida script saved to {output_path}{Style.RESET_ALL}")
-    return script
-
-
-def generate_frida_memory_dump_script(output_path: Optional[str] = None) -> str:
-    script = FRIDA_MEMORY_DUMP_SCRIPT
-    if output_path:
-        with open(output_path, "w") as f:
-            f.write(script)
-        print(f"{Fore.GREEN}Frida memory dump script saved to {output_path}{Style.RESET_ALL}")
-    return script
 
 
 def find_metadata_in_libunity(libunity_path: str) -> Optional[int]:
@@ -559,9 +405,21 @@ def find_metadata_in_apk(apk_path: str) -> Optional[Tuple[str, int]]:
 
 def find_metadata_in_folder(folder_path: str) -> Optional[Tuple[str, int]]:
     metadata_paths = [
-        os.path.join(folder_path, "assets", "bin", "Data", "Managed", "Metadata", "global-metadata.dat"),
-        os.path.join(folder_path, "assets", "bin", "Data", "Managed", "global-metadata.dat"),
-        os.path.join(folder_path, "assets", "il2cpp_data", "Metadata", "global-metadata.dat"),
+        os.path.join(
+            folder_path,
+            "assets",
+            "bin",
+            "Data",
+            "Managed",
+            "Metadata",
+            "global-metadata.dat",
+        ),
+        os.path.join(
+            folder_path, "assets", "bin", "Data", "Managed", "global-metadata.dat"
+        ),
+        os.path.join(
+            folder_path, "assets", "il2cpp_data", "Metadata", "global-metadata.dat"
+        ),
         os.path.join(folder_path, "assets", "global-metadata.dat"),
         os.path.join(folder_path, "global-metadata.dat"),
     ]
@@ -569,11 +427,12 @@ def find_metadata_in_folder(folder_path: str) -> Optional[Tuple[str, int]]:
         if os.path.isfile(path):
             try:
                 size = os.path.getsize(path)
-                print(f"{Fore.GREEN}Found metadata in folder: {path} ({size} bytes){Style.RESET_ALL}")
+                print(
+                    f"{Fore.GREEN}Found metadata in folder: {path} ({size} bytes){Style.RESET_ALL}"
+                )
                 return path, size
             except (IOError, OSError):
                 continue
-
     for depth, (root, dirs, files) in enumerate(os.walk(folder_path)):
         if depth > 5:
             break
@@ -582,11 +441,12 @@ def find_metadata_in_folder(folder_path: str) -> Optional[Tuple[str, int]]:
                 path = os.path.join(root, file)
                 try:
                     size = os.path.getsize(path)
-                    print(f"{Fore.GREEN}Found metadata: {path} ({size} bytes){Style.RESET_ALL}")
+                    print(
+                        f"{Fore.GREEN}Found metadata: {path} ({size} bytes){Style.RESET_ALL}"
+                    )
                     return path, size
                 except (IOError, OSError):
                     continue
-
     return None
 
 
@@ -594,11 +454,11 @@ def extract_from_apk(input_path: str, output_path: str, force: bool = False) -> 
     try:
         is_folder = os.path.isdir(input_path)
         is_apk = os.path.isfile(input_path) and input_path.lower().endswith(".apk")
-
         if not is_folder and not is_apk:
-            print(f"{Fore.RED}Error: {input_path} is not a valid APK file or folder{Style.RESET_ALL}")
+            print(
+                f"{Fore.RED}Error: {input_path} is not a valid APK file or folder{Style.RESET_ALL}"
+            )
             return False
-
         data = None
         if is_apk:
             result = find_metadata_in_apk(input_path)
@@ -618,16 +478,16 @@ def extract_from_apk(input_path: str, output_path: str, force: bool = False) -> 
                 return False
             with open(result[0], "rb") as f:
                 data = f.read()
-
         data, key = try_decrypt_metadata(data)
         if key:
             print(f"{Fore.GREEN}Auto-decrypted: {key}{Style.RESET_ALL}")
         elif not force and data[:4] != METADATA_MAGIC:
-            print(f"{Fore.YELLOW}Metadata appears encrypted. Use --force to extract anyway.{Style.RESET_ALL}")
+            print(
+                f"{Fore.YELLOW}Metadata appears encrypted. Use --force to extract anyway.{Style.RESET_ALL}"
+            )
             version, desc = get_metadata_version(data)
             print(f"{Fore.CYAN}Version detected: {version} ({desc}){Style.RESET_ALL}")
             return False
-
         with open(output_path, "wb") as f:
             f.write(data)
         print(f"{Fore.GREEN}Metadata extracted to {output_path}{Style.RESET_ALL}")
@@ -649,18 +509,15 @@ def extract_metadata_pointer(libunity_path: str) -> Optional[int]:
         with open(libunity_path, "rb") as libunity:
             elf = ELFFile(libunity)
             is64bit = elf.get_machine_arch() == "AArch64"
-
             load_segments = [
                 (seg["p_vaddr"], seg["p_vaddr"] + seg["p_memsz"], seg["p_offset"])
                 for seg in elf.iter_segments()
                 if seg["p_type"] == "PT_LOAD"
             ]
-
             data_section = elf.get_section_by_name(".data")
             if not data_section:
                 print(f"{Fore.RED}Error: .data section not found.{Style.RESET_ALL}")
                 return None
-
             print(f"{Fore.CYAN}Collecting relocations...{Style.RESET_ALL}")
             relocations = []
             for section in elf.iter_sections():
@@ -675,7 +532,11 @@ def extract_metadata_pointer(libunity_path: str) -> Optional[int]:
                     leave=False,
                 ):
                     addr = relocation["r_offset"]
-                    if not (data_section["sh_addr"] <= addr < data_section["sh_addr"] + data_section["sh_size"]):
+                    if not (
+                        data_section["sh_addr"]
+                        <= addr
+                        < data_section["sh_addr"] + data_section["sh_size"]
+                    ):
                         continue
                     if is64bit:
                         pointer = relocation.get("r_addend", 0)
@@ -690,7 +551,6 @@ def extract_metadata_pointer(libunity_path: str) -> Optional[int]:
                         pointer = struct.unpack("<I", libunity.read(4))[0]
                         if pointer != 0:
                             relocations.append(pointer)
-
             print(f"{Fore.CYAN}Searching for metadata pointer...{Style.RESET_ALL}")
             candidates = []
             for addr in tqdm(relocations, colour="green", unit="rel", leave=False):
@@ -701,16 +561,16 @@ def extract_metadata_pointer(libunity_path: str) -> Optional[int]:
                         candidates.append(addr)
                 except Exception:
                     continue
-
-        if not candidates:
-            print(f"{Fore.YELLOW}Warning: No metadata pointer found via relocations, trying alternative method...{Style.RESET_ALL}")
-            return extract_metadata_pointer_alternative(libunity_path)
-        elif len(candidates) > 1:
-            print(
-                f"{Fore.YELLOW}Multiple candidates found, using first: {hex(candidates[0])}{Style.RESET_ALL}"
-            )
-
-        return candidates[0]
+            if not candidates:
+                print(
+                    f"{Fore.YELLOW}Warning: No metadata pointer found via relocations, trying alternative method...{Style.RESET_ALL}"
+                )
+                return extract_metadata_pointer_alternative(libunity_path)
+            elif len(candidates) > 1:
+                print(
+                    f"{Fore.YELLOW}Multiple candidates found, using first: {hex(candidates[0])}{Style.RESET_ALL}"
+                )
+            return candidates[0]
     except Exception as e:
         print(f"{Fore.RED}Error extracting metadata pointer: {e}{Style.RESET_ALL}")
         return None
@@ -723,24 +583,25 @@ def extract_metadata_pointer_alternative(libunity_path: str) -> Optional[int]:
     except (IOError, OSError) as e:
         print(f"{Fore.RED}Error reading libunity.so: {e}{Style.RESET_ALL}")
         return None
-
     print(f"{Fore.CYAN}Scanning for metadata magic bytes...{Style.RESET_ALL}")
     idx = data.find(METADATA_MAGIC)
     if idx != -1:
         print(f"{Fore.GREEN}Found metadata at offset: {hex(idx)}{Style.RESET_ALL}")
         return idx
-
     print(f"{Fore.CYAN}Scanning for metadata signature...{Style.RESET_ALL}")
     idx = data.find(METADATA_SIGNATURE)
     if idx != -1:
-        print(f"{Fore.GREEN}Found metadata signature at offset: {hex(idx)}{Style.RESET_ALL}")
+        print(
+            f"{Fore.GREEN}Found metadata signature at offset: {hex(idx)}{Style.RESET_ALL}"
+        )
         return idx
-
     print(f"{Fore.RED}Error: No metadata found in libunity.so{Style.RESET_ALL}")
     return None
 
 
-def extract_metadata(libunity_path: str, size: int = 30_000_000) -> Optional[Tuple[bytes, bool]]:
+def extract_metadata(
+    libunity_path: str, size: int = 30_000_000
+) -> Optional[Tuple[bytes, bool]]:
     try:
         embedded_offset = find_metadata_in_libunity(libunity_path)
         if embedded_offset is not None:
@@ -753,33 +614,31 @@ def extract_metadata(libunity_path: str, size: int = 30_000_000) -> Optional[Tup
             version, desc = get_metadata_version(metadata)
             print(f"{Fore.CYAN}Metadata version: {version} ({desc}){Style.RESET_ALL}")
             return metadata, True
-
-        metadataptr = extract_metadata_pointer(libunity_path)
-        if metadataptr is None:
+        metadata_ptr = extract_metadata_pointer(libunity_path)
+        if metadata_ptr is None:
             return None
-
         with open(libunity_path, "rb") as libunity:
-            libunity.seek(metadataptr)
+            libunity.seek(metadata_ptr)
             metadata = libunity.read(size)
-
         metadata, key = try_decrypt_metadata(metadata)
         if key:
             print(f"{Fore.GREEN}Auto-decrypted: {key}{Style.RESET_ALL}")
-
         is64bit = True
         index = metadata.find(METADATA_MARKER_64)
         if index == -1:
             index = metadata.find(METADATA_MARKER_32)
             is64bit = False
-
         if index != -1:
             index += (4 - index % 4) % 4
             if index > 0 and index <= len(metadata):
                 metadata = metadata[:index]
-            print(f"{Fore.GREEN}Metadata end marker found ({'64-bit' if is64bit else '32-bit'}).{Style.RESET_ALL}")
+            print(
+                f"{Fore.GREEN}Metadata end marker found ({'64-bit' if is64bit else '32-bit'}).{Style.RESET_ALL}"
+            )
         else:
-            print(f"{Fore.RED}Warning: End marker not found, using full dump.{Style.RESET_ALL}")
-
+            print(
+                f"{Fore.RED}Warning: End marker not found, using full dump.{Style.RESET_ALL}"
+            )
         version, desc = get_metadata_version(metadata)
         print(f"{Fore.CYAN}Metadata version: {version} ({desc}){Style.RESET_ALL}")
         print(f"{Fore.CYAN}Metadata size: {len(metadata)} bytes{Style.RESET_ALL}")
@@ -792,10 +651,9 @@ def extract_metadata(libunity_path: str, size: int = 30_000_000) -> Optional[Tup
 def find_offset_candidates(metadata: bytes) -> List[int]:
     fields = []
     for i in range(0, 256, 4):
-        value = struct.unpack("<I", metadata[i:i+4])[0]
+        value = struct.unpack("<I", metadata[i : i + 4])[0]
         if 0 < value < len(metadata):
             fields.append(value)
-
     candidates = []
     for field in fields:
         if field < 8192 or field % 4 != 0:
@@ -805,24 +663,19 @@ def find_offset_candidates(metadata: bytes) -> List[int]:
         if field > len(metadata) / 3:
             candidates.append(field)
             continue
-
-        behind = metadata[field-4096:field]
-        ahead = metadata[field:field+4096]
+        behind = metadata[field - 4096 : field]
+        ahead = metadata[field : field + 4096]
         zeroes_behind = behind.count(b"\0")
         zeroes_ahead = ahead.count(b"\0")
-
         counter_behind = collections.Counter(behind)
         counter_ahead = collections.Counter(ahead)
         keys = set(counter_behind.keys()) | set(counter_ahead.keys())
-
         freq_behind = {k: counter_behind.get(k, 0) / 4096 for k in keys}
         freq_ahead = {k: counter_ahead.get(k, 0) / 4096 for k in keys}
         dist = sum(abs(freq_behind[k] - freq_ahead[k]) for k in keys)
         score = abs(zeroes_behind - zeroes_ahead) / 512 + dist
-
         if score > 0.75:
             candidates.append(field)
-
     return sorted(set(candidates))
 
 
@@ -837,32 +690,28 @@ def apply_heuristic(
 ) -> Tuple[Optional[Tuple[int, int, bytes]], List[Tuple[int, int]]]:
     found = []
     remaining = offsets_to_sizes.copy()
-
     for offset, size in offsets_to_sizes:
-        data = metadata[offset:offset+size]
+        data = metadata[offset : offset + size]
         if marker and marker in data:
             found.append((offset, size, data))
             break
-
         if not struct_sig:
             continue
-
         step = struct.calcsize(struct_sig)
         entries = []
         for i in range(0, len(data), step):
             try:
                 fields = struct.unpack_from(struct_sig, data, i)
-                entries.append(fields[0] if len(struct_sig.rstrip('x')) <= 1 else fields)
+                entries.append(
+                    fields[0] if len(struct_sig.rstrip("x")) <= 1 else fields
+                )
             except struct.error:
                 break
-
         if callback and callback(entries):
             found.append((offset, size, data))
-
     if not found:
         print(f"{Fore.RED + Style.BRIGHT}Failed heuristic: {name}{Style.RESET_ALL}")
         return None, offsets_to_sizes
-
     found.sort(key=lambda x: x[1], reverse=not prefer_lowest)
     result = found[0]
     if result[:2] in remaining:
@@ -871,40 +720,64 @@ def apply_heuristic(
     return result, remaining
 
 
-def decrypt_metadata(metadata: bytes, output_path: str) -> bool:
+def decrypt_metadata(
+    metadata: bytes, output_path: str, exclude_offsets: Optional[str] = None
+) -> bool:
     try:
         print(f"{Fore.GREEN}Starting metadata decryption...{Style.RESET_ALL}")
-
         metadata, key = try_decrypt_metadata(metadata)
         if key:
             print(f"{Fore.GREEN}Auto-decrypted: {key}{Style.RESET_ALL}")
         else:
-            print(f"{Fore.CYAN}Metadata is not encrypted or uses unknown encryption{Style.RESET_ALL}")
-
+            print(
+                f"{Fore.CYAN}Metadata is not encrypted or uses unknown encryption{Style.RESET_ALL}"
+            )
         version, desc = get_metadata_version(metadata)
         print(f"{Fore.CYAN}Metadata version: {version} ({desc}){Style.RESET_ALL}")
-
         if version < 15 or version > 43:
-            print(f"{Fore.YELLOW}Warning: Unknown metadata version {version}{Style.RESET_ALL}")
+            print(
+                f"{Fore.YELLOW}Warning: Unknown metadata version {version}{Style.RESET_ALL}"
+            )
         elif version > 38:
-            print(f"{Fore.YELLOW}Warning: Version {version} may have limited support{Style.RESET_ALL}")
-
+            print(
+                f"{Fore.YELLOW}Warning: Version {version} may have limited support{Style.RESET_ALL}"
+            )
         script_dir = os.path.dirname(os.path.abspath(__file__))
         debug_path = os.path.join(script_dir, "debug-metadata.bin")
         with open(debug_path, "wb") as f:
             f.write(metadata)
         print(f"{Fore.CYAN}Debug dump saved to {debug_path}{Style.RESET_ALL}")
-
         offset_candidates = find_offset_candidates(metadata)
         print(
             f"{Fore.CYAN}Found {len(offset_candidates)} offset candidates{Style.RESET_ALL}"
         )
-
+        if exclude_offsets:
+            for excluded in exclude_offsets.split(","):
+                try:
+                    todelete = int(excluded)
+                    offset_candidates.remove(todelete)
+                    print(f"{Fore.CYAN}Excluded offset {todelete}{Style.RESET_ALL}")
+                except (ValueError, KeyError):
+                    print(
+                        f"{Fore.YELLOW}Offset {todelete} not found in candidates{Style.RESET_ALL}"
+                    )
         offsets_to_sizes: List[Tuple[int, int]] = []
-        only_sizes = [x for x in [struct.unpack("<I", metadata[i:i+4])[0] for i in range(0, 256, 4)] if x not in offset_candidates]
-
+        only_sizes = [
+            x
+            for x in [
+                struct.unpack("<I", metadata[i : i + 4])[0] for i in range(0, 256, 4)
+            ]
+            if x not in offset_candidates
+        ]
         for offset in offset_candidates:
-            search_pool = only_sizes if offset != 256 else [struct.unpack("<I", metadata[i:i+4])[0] for i in range(0, 256, 4)]
+            search_pool = (
+                only_sizes
+                if offset != 256
+                else [
+                    struct.unpack("<I", metadata[i : i + 4])[0]
+                    for i in range(0, 256, 4)
+                ]
+            )
             for size in search_pool:
                 if size != offset and size != 0 and size < len(metadata) / 3:
                     if offset + size == len(metadata):
@@ -914,12 +787,10 @@ def decrypt_metadata(metadata: bytes, output_path: str) -> bool:
                         if offset + size == next_off:
                             offsets_to_sizes.append((offset, size))
                             break
-
         offsets_to_sizes = sorted(offsets_to_sizes, key=lambda x: x[0])
         print(
             f"{Fore.CYAN}Validated {len(offsets_to_sizes)} offset/size pairs{Style.RESET_ALL}"
         )
-
         reconstructed = bytearray(METADATA_HEADER_MAGIC + b"\x00" * 244)
         reconstructed_offsets = []
 
@@ -945,7 +816,9 @@ def decrypt_metadata(metadata: bytes, output_path: str) -> bool:
 
         def token_cb(prefix):
             return lambda e: (
-                all((x[-1] & 0xFF000000) == prefix for x in e if len(x) > 0) if e else True
+                all((x[-1] & 0xFF000000) == prefix for x in e if len(x) > 0)
+                if e
+                else True
             )
 
         def ascending_cb(e):
@@ -953,7 +826,13 @@ def decrypt_metadata(metadata: bytes, output_path: str) -> bool:
 
         heuristics = [
             ("stringLiteral", string_literal_cb, "<II", True, None),
-            ("stringLiteralData", None, None, True, b"\x00\x00\x00\x01\x09\x00\x00\x01"),
+            (
+                "stringLiteralData",
+                None,
+                None,
+                True,
+                b"\x00\x00\x00\x00\x01\x09\x00\x00\x01",
+            ),
             ("string", None, None, True, b"Assembly-CSharp\x00\x00\x00\x00\x00Assembl"),
             ("events", events_cb, "<IIIIII", False, None),
             ("properties", token_cb(0x17000000), "<IIIII", False, None),
@@ -988,23 +867,26 @@ def decrypt_metadata(metadata: bytes, output_path: str) -> bool:
             ("unresolvedIndirectCallParameterTypeRanges", None, "<II", False, None),
             ("exportedTypeDefinitions", None, "<I", False, None),
         ]
-
         for h_name, h_cb, h_sig, h_pref, h_marker in heuristics:
-            result, offsets_to_sizes = apply_heuristic(h_name, offsets_to_sizes, metadata, h_cb, h_sig, h_pref, h_marker)
+            result, offsets_to_sizes = apply_heuristic(
+                h_name, offsets_to_sizes, metadata, h_cb, h_sig, h_pref, h_marker
+            )
             if result:
                 reconstructed_offsets.append(result[0])
-
         if len(reconstructed_offsets) < 28:
-            print(f"{Fore.YELLOW}Warning: Only found {len(reconstructed_offsets)} sections (expected 29){Style.RESET_ALL}")
-
+            print(
+                f"{Fore.YELLOW}Warning: Only found {len(reconstructed_offsets)} sections (expected 29){Style.RESET_ALL}"
+            )
         pos = 0
 
         def add_header_size(size):
             nonlocal pos
             if len(reconstructed) >= 20 + pos:
-                reconstructed[12+pos:16+pos] = struct.pack("<I", size)
-                new_total = struct.unpack("<I", reconstructed[8+pos:12+pos])[0] + size
-                reconstructed[16+pos:20+pos] = struct.pack("<I", new_total)
+                reconstructed[12 + pos : 16 + pos] = struct.pack("<I", size)
+                new_total = (
+                    struct.unpack("<I", reconstructed[8 + pos : 12 + pos])[0] + size
+                )
+                reconstructed[16 + pos : 20 + pos] = struct.pack("<I", new_total)
                 pos += 8
 
         offset_lookup = sorted(reconstructed_offsets)
@@ -1013,23 +895,23 @@ def decrypt_metadata(metadata: bytes, output_path: str) -> bool:
                 offset = reconstructed_offsets[i]
                 try:
                     idx = offset_lookup.index(offset)
-                    size = offset_lookup[idx+1] - offset if idx+1 < len(offset_lookup) else len(metadata) - offset
+                    size = (
+                        offset_lookup[idx + 1] - offset
+                        if idx + 1 < len(offset_lookup)
+                        else len(metadata) - offset
+                    )
                 except (ValueError, IndexError):
                     size = len(metadata) - offset
                 add_header_size(size)
-                reconstructed += metadata[offset:offset+size]
-
+                reconstructed += metadata[offset : offset + size]
         if len(reconstructed) >= 256:
             reconstructed[252:256] = struct.pack(
                 "<I", len(metadata) - struct.unpack("<I", reconstructed[248:252])[0]
             )
-
         if os.path.isdir(output_path):
             output_path = os.path.join(output_path, "output-metadata.dat")
-
         with open(output_path, "wb") as f:
             f.write(reconstructed)
-
         print(f"{Fore.MAGENTA + Style.BRIGHT}Output: {output_path}{Style.RESET_ALL}")
         print(f"{Fore.GREEN}Metadata decrypted successfully!{Style.RESET_ALL}")
         return True
@@ -1040,61 +922,28 @@ def decrypt_metadata(metadata: bytes, output_path: str) -> bool:
 
 def print_menu():
     print(f"\n{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
-    print(f"  {Fore.GREEN}1{Style.RESET_ALL}. {i18n.get('menu_compare')}")
-    print(f"  {Fore.GREEN}2{Style.RESET_ALL}. {i18n.get('menu_frida')}")
-    print(f"  {Fore.GREEN}3{Style.RESET_ALL}. {i18n.get('menu_extract')}")
-    print(f"  {Fore.GREEN}4{Style.RESET_ALL}. {i18n.get('menu_decrypt')}")
-    print(f"  {Fore.GREEN}5{Style.RESET_ALL}. {i18n.get('menu_info')}")
-    print(f"  {Fore.GREEN}6{Style.RESET_ALL}. {i18n.get('menu_apk')}")
-    print(f"  {Fore.GREEN}7{Style.RESET_ALL}. {i18n.get('menu_frida_dump')}")
-    print(f"  {Fore.YELLOW}8{Style.RESET_ALL}. {i18n.get('menu_switch_lang')}")
+    print(f"  {Fore.GREEN}1{Style.RESET_ALL}. {i18n.get('menu_extract')}")
+    print(f"  {Fore.GREEN}2{Style.RESET_ALL}. {i18n.get('menu_decrypt')}")
+    print(f"  {Fore.GREEN}3{Style.RESET_ALL}. {i18n.get('menu_info')}")
+    print(f"  {Fore.GREEN}4{Style.RESET_ALL}. {i18n.get('menu_apk')}")
+    print(f"  {Fore.YELLOW}5{Style.RESET_ALL}. {i18n.get('menu_switch_lang')}")
     print(f"  {Fore.RED}0{Style.RESET_ALL}. {i18n.get('menu_exit')}")
     print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
-
-
-def menu_compare():
-    clear_screen()
-    print(f"\n{Fore.CYAN}=== {i18n.get('compare_title')} ==={Style.RESET_ALL}")
-    file1 = select_file(i18n.get("select_first_file"), [("DAT files", "*.dat"), ("All files", "*.*")])
-    if not file1:
-        print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
-        return
-    print(f"{i18n.get('first_file')}{file1}")
-    file2 = select_file(i18n.get("select_second_file"), [("DAT files", "*.dat"), ("All files", "*.*")])
-    if not file2:
-        print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
-        return
-    print(f"{i18n.get('second_file')}{file2}")
-    try:
-        bytes_count = input(i18n.get("bytes_to_compare")).strip()
-        bytes_count = int(bytes_count) if bytes_count else 10
-    except (EOFError, ValueError):
-        bytes_count = 10
-    compare_metadata_files(file1, file2, bytes_count)
-
-
-def menu_frida():
-    clear_screen()
-    print(f"\n{Fore.CYAN}=== {i18n.get('frida_title')} ==={Style.RESET_ALL}")
-    try:
-        offset = input(i18n.get("offset_prompt")).strip()
-    except EOFError:
-        return
-    output = select_save_file(i18n.get("save_frida"), [("JS files", "*.js"), ("All files", "*.*")], ".js")
-    if not output:
-        output = "frida.js"
-    generate_frida_script(offset, output)
 
 
 def menu_extract():
     clear_screen()
     print(f"\n{Fore.CYAN}=== {i18n.get('extract_title')} ==={Style.RESET_ALL}")
-    libunity = select_file(i18n.get("select_libunity"), [("SO files", "*.so"), ("All files", "*.*")])
+    libunity = select_file(
+        i18n.get("select_libunity"), [("SO files", ".so"), ("All files", ".*")]
+    )
     if not libunity:
         print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
         return
     print(f"{i18n.get('libunity')}{libunity}")
-    output = select_save_file(i18n.get("save_metadata"), [("DAT files", "*.dat"), ("All files", "*.*")], ".dat")
+    output = select_save_file(
+        i18n.get("save_metadata"), [("DAT files", ".dat"), ("All files", ".*")], ".dat"
+    )
     if not output:
         print(f"{Fore.RED}{i18n.get('no_output_path')}{Style.RESET_ALL}")
         return
@@ -1114,19 +963,24 @@ def menu_extract():
 def menu_decrypt():
     clear_screen()
     print(f"\n{Fore.CYAN}=== {i18n.get('decrypt_title')} ==={Style.RESET_ALL}")
-    input_file = select_file(i18n.get("select_encrypted"), [("DAT files", "*.dat"), ("All files", "*.*")])
+    input_file = select_file(
+        i18n.get("select_encrypted"), [("DAT files", ".dat"), ("All files", ".*")]
+    )
     if not input_file:
         print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
         return
     print(f"{i18n.get('input')}{input_file}")
-    output = select_save_file(i18n.get("save_decrypted"), [("DAT files", "*.dat"), ("All files", "*.*")], ".dat")
+    output = select_save_file(
+        i18n.get("save_decrypted"), [("DAT files", ".dat"), ("All files", ".*")], ".dat"
+    )
     if not output:
         print(f"{Fore.RED}{i18n.get('no_output_path')}{Style.RESET_ALL}")
         return
     try:
+        exclude = input("Exclude offsets (e.g., 1,2,3 or empty): ").strip() or None
         with open(input_file, "rb") as f:
             metadata = f.read()
-        decrypt_metadata(metadata, output)
+        decrypt_metadata(metadata, output, exclude)
     except Exception as e:
         print(f"{Fore.RED}{i18n.get('error')}{e}{Style.RESET_ALL}")
 
@@ -1134,7 +988,9 @@ def menu_decrypt():
 def menu_info():
     clear_screen()
     print(f"\n{Fore.CYAN}=== {i18n.get('info_title')} ==={Style.RESET_ALL}")
-    input_file = select_file(i18n.get("select_metadata"), [("DAT files", "*.dat"), ("All files", "*.*")])
+    input_file = select_file(
+        i18n.get("select_metadata"), [("DAT files", ".dat"), ("All files", ".*")]
+    )
     if not input_file:
         print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
         return
@@ -1142,16 +998,20 @@ def menu_info():
     try:
         with open(input_file, "rb") as f:
             data = f.read(512)
-        print(f"\n{Fore.CYAN}=== {i18n.get('metadata_info_title')} ==={Style.RESET_ALL}")
+        print(
+            f"\n{Fore.CYAN}=== {i18n.get('metadata_info_title')} ==={Style.RESET_ALL}"
+        )
         print(f"{i18n.get('magic')}{data[:4].hex().upper()}")
         version, desc = get_metadata_version(data)
         print(f"{i18n.get('version')}{version} ({desc})")
         print(f"{i18n.get('file_size')}{os.path.getsize(input_file)} bytes")
         if data[:4] != METADATA_MAGIC:
             print(f"{Fore.YELLOW}{i18n.get('warning_invalid_magic')}{Style.RESET_ALL}")
-            decrypted, key = try_decrypt_metadata(data)
-            if key:
-                print(f"{Fore.GREEN}{i18n.get('possible_encryption')}{key}{Style.RESET_ALL}")
+        decrypted, key = try_decrypt_metadata(data)
+        if key:
+            print(
+                f"{Fore.GREEN}{i18n.get('possible_encryption')}{key}{Style.RESET_ALL}"
+            )
     except Exception as e:
         print(f"{Fore.RED}{i18n.get('error')}{e}{Style.RESET_ALL}")
 
@@ -1160,7 +1020,9 @@ def menu_apk():
     clear_screen()
     print(f"\n{Fore.CYAN}=== {i18n.get('apk_title')} ==={Style.RESET_ALL}")
     print(f"{Fore.YELLOW}{i18n.get('apk_select')}{Style.RESET_ALL}")
-    input_path = select_file(i18n.get("select_apk"), [("APK files", "*.apk"), ("All files", "*.*")])
+    input_path = select_file(
+        i18n.get("select_apk"), [("APK files", ".apk"), ("All files", ".*")]
+    )
     if not input_path:
         print(f"{Fore.RED}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
         return
@@ -1168,12 +1030,14 @@ def menu_apk():
         print(f"{i18n.get('folder')}{input_path}")
     else:
         print(f"{i18n.get('apk')}{input_path}")
-    output = select_save_file(i18n.get("save_metadata"), [("DAT files", "*.dat"), ("All files", "*.*")], ".dat")
+    output = select_save_file(
+        i18n.get("save_metadata"), [("DAT files", ".dat"), ("All files", ".*")], ".dat"
+    )
     if not output:
         print(f"{Fore.RED}{i18n.get('no_output_path')}{Style.RESET_ALL}")
         return
     try:
-        force = input(i18n.get("force_extract")).strip().lower() == 'y'
+        force = input(i18n.get("force_extract")).strip().lower() == "y"
     except EOFError:
         force = False
     try:
@@ -1182,101 +1046,36 @@ def menu_apk():
         print(f"{Fore.RED}{i18n.get('error')}{e}{Style.RESET_ALL}")
 
 
-def menu_frida_memory_dump():
-    clear_screen()
-    print(f"\n{Fore.CYAN}=== {i18n.get('memory_dump_title')} ==={Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}{i18n.get('memory_dump_style')}{Style.RESET_ALL}")
-    print(f"\n{Fore.CYAN}{i18n.get('memory_dump_usage')}{Style.RESET_ALL}")
-    print(f"  python dump-metadata.py com.game.package")
-    print(f"  python dump-metadata.py com.game.package -o 0x123456")
-    print(f"\n{Fore.CYAN}{i18n.get('memory_dump_requires')}{Style.RESET_ALL}")
-    output = select_save_file(i18n.get("save_frida"), [("JS files", "*.js"), ("All files", "*.*")], ".js")
-    if not output:
-        output = "dump-metadata.js"
-    generate_frida_memory_dump_script(output)
-    py_script = """import argparse
-import frida
-import sys
-import os
-
-def on_message(message, data):
-    if message['type'] == 'log':
-        print(message['payload'])
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('package_name')
-    parser.add_argument('-o', '--offset', type=str, default=None)
-    parser.add_argument('-s', '--size', type=int, default=None)
-    parser.add_argument('-p', '--pattern', type=str, default="af 1b b1 fa 1? 00 00 00 00")
-    args = parser.parse_args()
-
-    device = frida.get_usb_device()
-    session = device.attach(args.package_name)
-
-    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dump-metadata.js')
-    with open(script_path, 'r') as f:
-        script_content = f.read()
-
-    script = session.create_script(script_content)
-    script.on('message', on_message)
-    script.load()
-
-    offset_val = int(args.offset, 16) if args.offset else 0
-    script.exports.start(offset_val, args.size, args.pattern, args.package_name)
-    sys.stdin.read()
-
-if __name__ == '__main__':
-    main()
-"""
-    try:
-        py_output = input(i18n.get("generate_python")).strip().lower()
-    except EOFError:
-        return
-    if py_output == 'y':
-        try:
-            py_path = input(i18n.get("output_path")).strip() or "dump-metadata.py"
-        except EOFError:
-            return
-        with open(py_path, "w") as f:
-            f.write(py_script)
-        print(f"{Fore.GREEN}{i18n.get('python_saved')}{py_path}{Style.RESET_ALL}")
-
-
 def interactive_menu():
     print(Fore.CYAN + BANNER + Style.RESET_ALL)
     loading_animation()
     while True:
         print_menu()
         try:
-            choice = input(f"{Fore.CYAN}{i18n.get('select_option')}{Style.RESET_ALL}: ").strip()
+            choice = input(
+                f"{Fore.CYAN}{i18n.get('select_option')}{Style.RESET_ALL}: "
+            ).strip()
         except EOFError:
             print(f"\n{Fore.GREEN}{i18n.get('exiting')}{Style.RESET_ALL}")
             break
-
         if choice == "1":
-            menu_compare()
-        elif choice == "2":
-            menu_frida()
-        elif choice == "3":
             menu_extract()
-        elif choice == "4":
+        elif choice == "2":
             menu_decrypt()
-        elif choice == "5":
+        elif choice == "3":
             menu_info()
-        elif choice == "6":
+        elif choice == "4":
             menu_apk()
-        elif choice == "7":
-            menu_frida_memory_dump()
-        elif choice == "8":
+        elif choice == "5":
             lang = i18n.toggle_language()
-            print(f"{Fore.GREEN}{i18n.get('lang_changed')}{lang.upper()}{Style.RESET_ALL}")
+            print(
+                f"{Fore.GREEN}{i18n.get('lang_changed')}{lang.upper()}{Style.RESET_ALL}"
+            )
         elif choice == "0":
             print(f"{Fore.GREEN}{i18n.get('exiting')}{Style.RESET_ALL}")
             break
         else:
             print(f"{Fore.RED}{i18n.get('invalid_option')}{Style.RESET_ALL}")
-
         try:
             input(f"\n{Fore.CYAN}{i18n.get('press_enter')}{Style.RESET_ALL}")
         except EOFError:
@@ -1285,22 +1084,9 @@ def interactive_menu():
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="Metadata-Worker",
-        description="IL2CPP Metadata Tool - Compare, Extract, Decrypt, Dump APK",
+        prog="Metadata-Worker", description="IL2CPP Metadata Tool"
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
-
-    compare_parser = subparsers.add_parser("compare", help="Compare two metadata files")
-    compare_parser.add_argument("file1", help="First metadata file")
-    compare_parser.add_argument("file2", help="Second metadata file")
-    compare_parser.add_argument(
-        "-b", "--bytes", type=int, default=10, help="Bytes to compare"
-    )
-
-    frida_parser = subparsers.add_parser("frida", help="Generate Frida script")
-    frida_parser.add_argument("offset", help="LoadMetaDataFile offset (e.g., 0x123456)")
-    frida_parser.add_argument("-o", "--output", help="Output file path")
-
     extract_parser = subparsers.add_parser(
         "extract", help="Extract metadata from libunity.so"
     )
@@ -1309,35 +1095,26 @@ def main():
     extract_parser.add_argument(
         "-s", "--size", type=int, default=30_000_000, help="Max extraction size"
     )
-
     decrypt_parser = subparsers.add_parser("decrypt", help="Decrypt extracted metadata")
     decrypt_parser.add_argument("input", help="Path to encrypted metadata")
     decrypt_parser.add_argument("-o", "--output", required=True, help="Output path")
-
+    decrypt_parser.add_argument("-e", "--exclude", help="Exclude offsets (e.g., 1,2,3)")
     info_parser = subparsers.add_parser("info", help="Show metadata info")
     info_parser.add_argument("input", help="Path to metadata file")
-
-    apk_parser = subparsers.add_parser("apk", help="Extract metadata from APK or unpacked APK folder")
-    apk_parser.add_argument("input", help="Path to APK file or unpacked APK folder")
+    apk_parser = subparsers.add_parser(
+        "apk", help="Extract metadata from APK or folder"
+    )
+    apk_parser.add_argument("input", help="Path to APK file or folder")
     apk_parser.add_argument("-o", "--output", required=True, help="Output path")
-    apk_parser.add_argument("-f", "--force", action="store_true", help="Force extract even if metadata looks encrypted")
-
-    memory_dump_parser = subparsers.add_parser("memory-dump", help="Generate Frida memory dump script (CameroonD style)")
-    memory_dump_parser.add_argument("-o", "--output", help="Output file path")
-
+    apk_parser.add_argument(
+        "-f", "--force", action="store_true", help="Force extract if encrypted"
+    )
     menu_parser = subparsers.add_parser("menu", help="Interactive menu mode")
-
     args = parser.parse_args()
-
     if args.command and args.command != "menu":
         print(Fore.CYAN + BANNER + Style.RESET_ALL)
         loading_animation()
-
-    if args.command == "compare":
-        compare_metadata_files(args.file1, args.file2, args.bytes)
-    elif args.command == "frida":
-        generate_frida_script(args.offset, args.output)
-    elif args.command == "extract":
+    if args.command == "extract":
         if not os.path.isfile(args.libunity):
             print(f"{Fore.RED}Error: {args.libunity} not found{Style.RESET_ALL}")
             sys.exit(1)
@@ -1353,7 +1130,7 @@ def main():
             sys.exit(1)
         with open(args.input, "rb") as f:
             metadata = f.read()
-        decrypt_metadata(metadata, args.output)
+        decrypt_metadata(metadata, args.output, args.exclude)
     elif args.command == "info":
         if not os.path.isfile(args.input):
             print(f"{Fore.RED}Error: {args.input} not found{Style.RESET_ALL}")
@@ -1366,7 +1143,9 @@ def main():
         print(f"Version: {version} ({desc})")
         print(f"File size: {os.path.getsize(args.input)} bytes")
         if data[:4] != METADATA_MAGIC:
-            print(f"{Fore.YELLOW}Warning: Invalid magic bytes - file may be encrypted{Style.RESET_ALL}")
+            print(
+                f"{Fore.YELLOW}Warning: Invalid magic bytes - file may be encrypted{Style.RESET_ALL}"
+            )
             decrypted, key = try_decrypt_metadata(data)
             if key:
                 print(f"{Fore.GREEN}Possible encryption key: {key}{Style.RESET_ALL}")
@@ -1375,9 +1154,6 @@ def main():
             print(f"{Fore.RED}Error: {args.input} not found{Style.RESET_ALL}")
             sys.exit(1)
         extract_from_apk(args.input, args.output, args.force)
-    elif args.command == "memory-dump":
-        output = args.output or "dump-metadata.js"
-        generate_frida_memory_dump_script(output)
     elif args.command == "menu":
         interactive_menu()
     else:
