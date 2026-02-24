@@ -7,13 +7,12 @@ LANGUAGES = {
 ██║╚██╔╝██║    ██╔══╝         ██║       ██╔══██║    ██║  ██║    ██╔══██║       ██║       ██╔══██║
 ██║ ╚═╝ ██║    ███████╗       ██║       ██║  ██║    ██████╔╝    ██║  ██║       ██║       ██║  ██║
 ╚═╝     ╚═╝    ╚══════╝       ╚═╝       ╚═╝  ╚═╝    ╚═════╝     ╚═╝  ╚═╝       ╚═╝       ╚═╝  ╚═╝
-
 ██╗    ██╗     ██████╗     ██████╗     ██╗  ██╗    ███████╗    ██████╗
 ██║    ██║    ██╔═══██╗    ██╔══██╗    ██║ ██╔╝    ██╔════╝    ██╔══██╗
-██║ █╗ ██║    ██║   ██║    ██████╔╝    █████╔╝     █████╗      ██████╔╝
+██║ █╗ ██║    ██║   ██║    ██████╔╝     █████╔╝     █████╗      ██████╔╝
 ██║███╗██║    ██║   ██║    ██╔══██╗    ██╔═██╗     ██╔══╝      ██╔══██╗
 ╚███╔███╔╝    ╚██████╔╝    ██║  ██║    ██║  ██╗    ███████╗    ██║  ██║
- ╚══╝╚══╝      ╚═════╝     ╚═╝  ╚═╝    ╚═╝  ╚═╝    ╚══════╝    ╚═╝  ╚═╝
+╚══╝╚══╝      ╚═════╝     ╚═╝  ╚═╝    ╚═╝  ╚═╝    ╚══════╝    ╚═╝  ╚═╝
 """,
         "path_to_file": "Path to file (or 'q' to cancel): ",
         "path_to_save": "Path to save (or 'q' to cancel): ",
@@ -62,25 +61,25 @@ LANGUAGES = {
         "auto_decrypted": "Auto-decrypted: ",
         "version_detected": "Version detected: ",
         "extracted_to": "Metadata extracted to ",
-        "collecting_relocations": "Collecting relocations...",
-        "warning_no_pointer": "Warning: No metadata pointer found via relocations, trying alternative method...",
+        "collecting_relocations": "Collecting relocations... ",
+        "warning_no_pointer": "Warning: No metadata pointer found via relocations, trying alternative method... ",
         "multiple_candidates": "Multiple candidates found, using first: ",
         "debug_saved": "Debug dump saved to ",
-        "warning_end_marker": "Warning: End marker not found, using full dump.",
+        "warning_end_marker": "Warning: End marker not found, using full dump. ",
         "metadata_size": "Metadata size: ",
         "found_offset_candidates": "Found ",
-        "offset_candidates": " offset candidates",
+        "offset_candidates": " offset candidates ",
         "validated_pairs": "Validated ",
-        "offset_size_pairs": " offset/size pairs",
+        "offset_size_pairs": " offset/size pairs ",
         "found_section": "Found ",
         "at_offset": " at offset ",
         "failed_heuristic": "Failed heuristic: ",
         "warning_sections": "Warning: Only found ",
-        "expected_sections": " sections (expected 29)",
+        "expected_sections": " sections (expected 29) ",
         "output": "Output: ",
-        "decrypt_success": "Metadata decrypted successfully!",
-        "starting_decrypt": "Starting metadata decryption...",
-        "not_encrypted": "Metadata is not encrypted or uses unknown encryption",
+        "decrypt_success": "Metadata decrypted successfully! ",
+        "starting_decrypt": "Starting metadata decryption... ",
+        "not_encrypted": "Metadata is not encrypted or uses unknown encryption ",
         "lang_changed": "Language changed to ",
     },
     "ru": {
@@ -91,13 +90,12 @@ LANGUAGES = {
 ██║╚██╔╝██║    ██╔══╝         ██║       ██╔══██║    ██║  ██║    ██╔══██║       ██║       ██╔══██║
 ██║ ╚═╝ ██║    ███████╗       ██║       ██║  ██║    ██████╔╝    ██║  ██║       ██║       ██║  ██║
 ╚═╝     ╚═╝    ╚══════╝       ╚═╝       ╚═╝  ╚═╝    ╚═════╝     ╚═╝  ╚═╝       ╚═╝       ╚═╝  ╚═╝
-
 ██╗    ██╗     ██████╗     ██████╗     ██╗  ██╗    ███████╗    ██████╗
 ██║    ██║    ██╔═══██╗    ██╔══██╗    ██║ ██╔╝    ██╔════╝    ██╔══██╗
-██║ █╗ ██║    ██║   ██║    ██████╔╝    █████╔╝     █████╗      ██████╔╝
+██║ █╗ ██║    ██║   ██║    ██████╔╝     █████╔╝     █████╗      ██████╔╝
 ██║███╗██║    ██║   ██║    ██╔══██╗    ██╔═██╗     ██╔══╝      ██╔══██╗
 ╚███╔███╔╝    ╚██████╔╝    ██║  ██║    ██║  ██╗    ███████╗    ██║  ██║
- ╚══╝╚══╝      ╚═════╝     ╚═╝  ╚═╝    ╚═╝  ╚═╝    ╚══════╝    ╚═╝  ╚═╝
+╚══╝╚══╝      ╚═════╝     ╚═╝  ╚═╝    ╚═╝  ╚═╝    ╚══════╝    ╚═╝  ╚═╝
 """,
         "path_to_file": "Путь к файлу (или 'q' для отмены): ",
         "path_to_save": "Путь для сохранения (или 'q' для отмены): ",
@@ -146,29 +144,28 @@ LANGUAGES = {
         "auto_decrypted": "Авто-расшифровка: ",
         "version_detected": "Обнаружена версия: ",
         "extracted_to": "Метаданные извлечены в ",
-        "collecting_relocations": "Сбор релокаций...",
-        "warning_no_pointer": "Внимание: Указатель не найден через релокации, пробуем альтернативный метод...",
+        "collecting_relocations": "Сбор релокаций... ",
+        "warning_no_pointer": "Внимание: Указатель не найден через релокации, пробуем альтернативный метод... ",
         "multiple_candidates": "Найдено несколько кандидатов, используем первый: ",
         "debug_saved": "Отладочный дамп сохранён в ",
-        "warning_end_marker": "Внимание: Маркер конца не найден, используем полный дамп.",
+        "warning_end_marker": "Внимание: Маркер конца не найден, используем полный дамп. ",
         "metadata_size": "Размер метаданных: ",
         "found_offset_candidates": "Найдено ",
-        "offset_candidates": " кандидатов смещения",
+        "offset_candidates": " кандидатов смещения ",
         "validated_pairs": "Проверено ",
-        "offset_size_pairs": " пар смещение/размер",
+        "offset_size_pairs": " пар смещение/размер ",
         "found_section": "Найдено ",
         "at_offset": " по смещению ",
         "failed_heuristic": "Не удалось эвристику: ",
         "warning_sections": "Внимание: Найдено только ",
-        "expected_sections": " секций (ожидалось 29)",
+        "expected_sections": " секций (ожидалось 29) ",
         "output": "Вывод: ",
-        "decrypt_success": "Метаданные успешно расшифрованы!",
-        "starting_decrypt": "Начало расшифровки метаданных...",
-        "not_encrypted": "Метаданные не зашифрованы или используется неизвестное шифрование",
+        "decrypt_success": "Метаданные успешно расшифрованы! ",
+        "starting_decrypt": "Начало расшифровки метаданных... ",
+        "not_encrypted": "Метаданные не зашифрованы или используется неизвестное шифрование ",
         "lang_changed": "Язык изменён на ",
     },
 }
-
 current_language = "en"
 
 
