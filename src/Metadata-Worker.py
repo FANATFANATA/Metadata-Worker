@@ -195,9 +195,9 @@ def select_folder(title: str) -> str:
 def loading_animation():
     frames = ["|", "/", "-", "\\"]
     for frame in frames:
-        print(f"{i18n.get('running')}{frame}", end="\r")
+        print(f"Running...{frame}", end="\r")
         time.sleep(0.1)
-    print(f"{i18n.get('loading_complete')}     ")
+    print(" " * 20, end="\r")
 
 
 def is_valid_metadata(data: bytes) -> bool:
@@ -921,19 +921,22 @@ def decrypt_metadata(
 
 
 def print_menu():
-    print(f"\n{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
-    print(f"  {Fore.GREEN}1{Style.RESET_ALL}. {i18n.get('menu_extract')}")
-    print(f"  {Fore.GREEN}2{Style.RESET_ALL}. {i18n.get('menu_decrypt')}")
-    print(f"  {Fore.GREEN}3{Style.RESET_ALL}. {i18n.get('menu_info')}")
-    print(f"  {Fore.GREEN}4{Style.RESET_ALL}. {i18n.get('menu_apk')}")
-    print(f"  {Fore.YELLOW}5{Style.RESET_ALL}. {i18n.get('menu_switch_lang')}")
-    print(f"  {Fore.RED}0{Style.RESET_ALL}. {i18n.get('menu_exit')}")
-    print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
+    print()
+    print(f"{Fore.CYAN}╔{'═'*54}╗{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {Fore.GREEN}1{Style.RESET_ALL}. {i18n.get('menu_extract'):<46}{Fore.CYAN}║{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {Fore.GREEN}2{Style.RESET_ALL}. {i18n.get('menu_decrypt'):<46}{Fore.CYAN}║{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {Fore.GREEN}3{Style.RESET_ALL}. {i18n.get('menu_info'):<46}{Fore.CYAN}║{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {Fore.GREEN}4{Style.RESET_ALL}. {i18n.get('menu_apk'):<46}{Fore.CYAN}║{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {Fore.YELLOW}5{Style.RESET_ALL}. {i18n.get('menu_switch_lang'):<46}{Fore.CYAN}║{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {Fore.RED}0{Style.RESET_ALL}. {i18n.get('menu_exit'):<46}{Fore.CYAN}║{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}╚{'═'*54}╝{Style.RESET_ALL}")
 
 
 def menu_extract():
     clear_screen()
-    print(f"\n{Fore.CYAN}=== {i18n.get('extract_title')} ==={Style.RESET_ALL}")
+    print(f"\n{Fore.CYAN}╔{'═'*54}╗{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {i18n.get('extract_title'):^48}{Fore.CYAN}║{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}╚{'═'*54}╝{Style.RESET_ALL}")
     libunity = select_file(
         i18n.get("select_libunity"), [("SO files", ".so"), ("All files", ".*")]
     )
@@ -962,7 +965,9 @@ def menu_extract():
 
 def menu_decrypt():
     clear_screen()
-    print(f"\n{Fore.CYAN}=== {i18n.get('decrypt_title')} ==={Style.RESET_ALL}")
+    print(f"\n{Fore.CYAN}╔{'═'*54}╗{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {i18n.get('decrypt_title'):^48}{Fore.CYAN}║{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}╚{'═'*54}╝{Style.RESET_ALL}")
     input_file = select_file(
         i18n.get("select_encrypted"), [("DAT files", ".dat"), ("All files", ".*")]
     )
@@ -987,7 +992,9 @@ def menu_decrypt():
 
 def menu_info():
     clear_screen()
-    print(f"\n{Fore.CYAN}=== {i18n.get('info_title')} ==={Style.RESET_ALL}")
+    print(f"\n{Fore.CYAN}╔{'═'*54}╗{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {i18n.get('info_title'):^48}{Fore.CYAN}║{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}╚{'═'*54}╝{Style.RESET_ALL}")
     input_file = select_file(
         i18n.get("select_metadata"), [("DAT files", ".dat"), ("All files", ".*")]
     )
@@ -998,9 +1005,9 @@ def menu_info():
     try:
         with open(input_file, "rb") as f:
             data = f.read(512)
-        print(
-            f"\n{Fore.CYAN}=== {i18n.get('metadata_info_title')} ==={Style.RESET_ALL}"
-        )
+        print(f"\n{Fore.CYAN}╔{'═'*54}╗{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}║{Style.RESET_ALL}  {i18n.get('metadata_info_title'):^48}{Fore.CYAN}║{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}╚{'═'*54}╝{Style.RESET_ALL}")
         print(f"{i18n.get('magic')}{data[:4].hex().upper()}")
         version, desc = get_metadata_version(data)
         print(f"{i18n.get('version')}{version} ({desc})")
@@ -1018,7 +1025,9 @@ def menu_info():
 
 def menu_apk():
     clear_screen()
-    print(f"\n{Fore.CYAN}=== {i18n.get('apk_title')} ==={Style.RESET_ALL}")
+    print(f"\n{Fore.CYAN}╔{'═'*54}╗{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}║{Style.RESET_ALL}  {i18n.get('apk_title'):^48}{Fore.CYAN}║{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}╚{'═'*54}╝{Style.RESET_ALL}")
     print(f"{Fore.YELLOW}{i18n.get('apk_select')}{Style.RESET_ALL}")
     input_path = select_file(
         i18n.get("select_apk"), [("APK files", ".apk"), ("All files", ".*")]
@@ -1047,6 +1056,7 @@ def menu_apk():
 
 
 def interactive_menu():
+    clear_screen()
     print(Fore.CYAN + BANNER + Style.RESET_ALL)
     loading_animation()
     while True:
@@ -1139,7 +1149,9 @@ def main():
             sys.exit(1)
         with open(args.input, "rb") as f:
             data = f.read(512)
-        print(f"\n{Fore.CYAN}=== Metadata Info ==={Style.RESET_ALL}")
+        print(f"\n{Fore.CYAN}╔{'═'*54}╗{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}║{Style.RESET_ALL}  {'Metadata Info':^48}{Fore.CYAN}║{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}╚{'═'*54}╝{Style.RESET_ALL}")
         print(f"Magic: {data[:4].hex().upper()}")
         version, desc = get_metadata_version(data)
         print(f"Version: {version} ({desc})")

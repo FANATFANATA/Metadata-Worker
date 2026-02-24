@@ -15,7 +15,6 @@ LANGUAGES = {
 ╚███╔███╔╝    ╚██████╔╝    ██║  ██║    ██║  ██╗    ███████╗    ██║  ██║
  ╚══╝╚══╝      ╚═════╝     ╚═╝  ╚═╝    ╚═╝  ╚═╝    ╚══════╝    ╚═╝  ╚═╝
 """,
-        "loading_complete": "Loading complete!",
         "path_to_file": "Path to file (or 'q' to cancel): ",
         "path_to_save": "Path to save (or 'q' to cancel): ",
         "path_to_folder": "Path to folder (or 'q' to cancel): ",
@@ -81,7 +80,6 @@ LANGUAGES = {
         "decrypt_success": "Metadata decrypted successfully!",
         "starting_decrypt": "Starting metadata decryption...",
         "not_encrypted": "Metadata is not encrypted or uses unknown encryption",
-        "running": "Running... ",
         "lang_changed": "Language changed to ",
     },
     "ru": {
@@ -100,7 +98,6 @@ LANGUAGES = {
 ╚███╔███╔╝    ╚██████╔╝    ██║  ██║    ██║  ██╗    ███████╗    ██║  ██║
  ╚══╝╚══╝      ╚═════╝     ╚═╝  ╚═╝    ╚═╝  ╚═╝    ╚══════╝    ╚═╝  ╚═╝
 """,
-        "loading_complete": "Загрузка завершена!",
         "path_to_file": "Путь к файлу (или 'q' для отмены): ",
         "path_to_save": "Путь для сохранения (или 'q' для отмены): ",
         "path_to_folder": "Путь к папке (или 'q' для отмены): ",
@@ -166,7 +163,6 @@ LANGUAGES = {
         "decrypt_success": "Метаданные успешно расшифрованы!",
         "starting_decrypt": "Начало расшифровки метаданных...",
         "not_encrypted": "Метаданные не зашифрованы или используется неизвестное шифрование",
-        "running": "Загрузка... ",
         "lang_changed": "Язык изменён на ",
     },
 }
