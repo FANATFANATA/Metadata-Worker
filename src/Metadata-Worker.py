@@ -1080,6 +1080,8 @@ def interactive_menu():
             input(f"\n{Fore.CYAN}{i18n.get('press_enter')}{Style.RESET_ALL}")
         except EOFError:
             break
+        clear_screen()
+        print(Fore.CYAN + BANNER + Style.RESET_ALL)
 
 
 def main():
