@@ -1,5 +1,4 @@
 .qwen/
-logic/
 .idea/
 __pycache__/
 *.py[cod]
@@ -37,7 +36,6 @@ coverage.xml
 .pytest_cache/
 *.log
 *.bin
-config.json
 .mypy_cache/
 .venv
 env/
@@ -46,6 +44,3 @@ ENV/
 env.bak/
 venv.bak/
 gha-creds-*.json
-build.bat
-r.txt
-*src*/*ByMichelM*.py*

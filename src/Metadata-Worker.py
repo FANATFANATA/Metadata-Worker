@@ -305,7 +305,7 @@ def loading_animation():
         print(f"Running...{frame}", end="\r")
         time.sleep(0.1)
     print(" " * 20, end="\r")
-def is_valid_metadata( bytes) -> bool:
+def is_valid_metadata(data: bytes) -> bool:
     if len(data) < 4:
         return False
     return data[:4] == METADATA_MAGIC
@@ -356,7 +356,7 @@ def decrypt_xxtea(data: bytes, key: bytes) -> bytes:
             sum_val = (sum_val - delta) & 0xFFFFFFFF
         struct.pack_into("<II", out, i, v[0], v[1])
     return bytes(out)
-def decrypt_rc4( bytes, key: bytes = b"wanzg") -> bytes:
+def decrypt_rc4(data: bytes, key: bytes = b"wanzg") -> bytes:
     S = list(range(256))
     j = 0
     for i in range(256):
@@ -408,13 +408,13 @@ def auto_wanzg_key(data: bytes) -> Optional[List[int]]:
         if k[0] == k[4] and k[1] == k[5] and k[2] == k[6]:
             return k[:5]
     return None
-def decrypt_striped_xor( bytes, key: int = 0xA3, stripe: int = 0x1000) -> bytes:
+def decrypt_striped_xor(data: bytes, key: int = 0xA3, stripe: int = 0x1000) -> bytes:
     out = bytearray(data)
     for i in range(0, len(out), stripe * 2):
         for j in range(min(stripe, len(out) - i)):
             out[i + j] ^= key
     return bytes(out)
-def try_decrypt_metadata( bytes) -> Tuple[bytes, Optional[str]]:
+def try_decrypt_metadata(data: bytes) -> Tuple[bytes, Optional[str]]:
     if is_valid_metadata(data):
         return data, None
     key = auto_header_xor_key(data)
@@ -741,7 +741,7 @@ def extract_metadata(
         print(f"{current_theme['error']}Error extracting metadata: {e}{Style.RESET_ALL}")
         log_error(f"Extract error: {e}")
         return None
-def find_offset_candidates(meta bytes) -> List[int]:
+def find_offset_candidates(metadata: bytes) -> List[int]:
     fields = []
     for i in range(0, 256, 4):
         value = struct.unpack("<I", metadata[i : i + 4])[0]
@@ -813,7 +813,7 @@ def apply_heuristic(
     log_debug(f"Found {name} at {result[0]}")
     return result, remaining
 def decrypt_metadata(
-    meta bytes, output_path: str, exclude_offsets: Optional[str] = None
+    metadata: bytes, output_path: str, exclude_offsets: Optional[str] = None
 ) -> bool:
     log_info(f"Decrypting metadata to: {output_path}")
     try:
