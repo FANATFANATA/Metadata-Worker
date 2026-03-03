@@ -1,3 +1,5 @@
+## Not working or need to be update - contact me in Telegram\Не работает или нужен апдейт - пишите в телеграм.
+
 # Metadata-Worker
 
 **[English](#english)** | **[Русский](#russian)**
