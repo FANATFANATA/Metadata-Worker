@@ -20,7 +20,7 @@ A comprehensive Python tool for working with Unity IL2CPP global-metadata.dat fi
 
 ## Special Thanks
 
-🙏 **Huge thanks to [Michel-M](https://github.com/Michel-M-code)** for his **[Metadata-Decryptor](https://github.com/Michel-M-code/Metadata-Decryptor)** project!
+**Huge thanks to [Michel-M](https://github.com/Michel-M-code)** for his **[Metadata-Decryptor](https://github.com/Michel-M-code/Metadata-Decryptor)** project!
 
 This project was built on the foundation laid by Metadata-Decryptor — it served as the base and main inspiration for Metadata-Worker. Many concepts and approaches were learned from Michel-M's work.
 
@@ -40,6 +40,6 @@ This project was built on the foundation laid by Metadata-Decryptor — it serve
 
 ## Особая благодарность
 
-🙏 **Огромное спасибо [Michel-M](https://github.com/Michel-M-code)** за его проект **[Metadata-Decryptor](https://github.com/Michel-M-code/Metadata-Decryptor)**!
+**Огромное спасибо [Michel-M](https://github.com/Michel-M-code)** за его проект **[Metadata-Decryptor](https://github.com/Michel-M-code/Metadata-Decryptor)**!
 
 Этот проект был построен на фундаменте, заложенном Metadata-Decryptor — он послужил основой и главным источником вдохновения для Metadata-Worker. Многие концепции и подходы были изучены благодаря работе Michel-M.
