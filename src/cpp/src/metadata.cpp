@@ -48,7 +48,6 @@ bool MetadataReader::parseHeader() {
         return false;
     }
     
-    // Чтение заголовка (упрощенно, нужно уточнить структуру)
     if (m_data.size() < 56) {
         return false;
     }
@@ -56,8 +55,6 @@ bool MetadataReader::parseHeader() {
     m_header.magic = *reinterpret_cast<const uint32_t*>(&m_data[0]);
     m_header.version = *reinterpret_cast<const uint32_t*>(&m_data[4]);
     m_header.size = *reinterpret_cast<const uint32_t*>(&m_data[8]);
-    
-    // Остальные поля заголовка можно добавить по мере необходимости
     
     return true;
 }
@@ -77,7 +74,6 @@ MetadataInfo MetadataReader::analyze() {
         return info;
     }
     
-    // Определение версии Unity
     uint16_t version = static_cast<uint16_t>(m_header.version & 0xFFFF);
     switch (version) {
         case 16: info.unityVersion = UnityVersion::Unity53; break;
@@ -138,7 +134,6 @@ bool MetadataReader::isEncrypted() const {
         return false;
     }
     
-    // Проверка сигнатуры
     for (int i = 0; i < 12; ++i) {
         if (m_data[i] != METADATA_SIGNATURE[i]) {
             return true;
@@ -148,4 +143,4 @@ bool MetadataReader::isEncrypted() const {
     return false;
 }
 
-} // namespace metadata
+}

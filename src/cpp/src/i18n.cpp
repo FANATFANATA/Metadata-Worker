@@ -15,7 +15,7 @@ LocalizationManager& LocalizationManager::instance() {
 }
 
 void LocalizationManager::loadDefaultTranslations() {
-    // English translations
+    
     m_translations["en"]["banner"] = R"(
   __  __ _     _     _               _                   ____  _             _    
  |  \/  (_) __| | __| |_   _ _ __ __| |_ __ ___  _ __   / ___|(_)_ __ ___ __| |_  
@@ -45,7 +45,7 @@ void LocalizationManager::loadDefaultTranslations() {
     m_translations["en"]["exit"] = "0. Exit";
     m_translations["en"]["choose_option"] = "Choose option: ";
     
-    // Russian translations
+    
     m_translations["ru"]["banner"] = R"(
   __  __ _     _     _               _                   ____  _             _    
  |  \/  (_) __| | __| |_   _ _ __ __| |_ __ ___  _ __   / ___|(_)_ __ ___ __| |_  
@@ -98,7 +98,6 @@ std::string LocalizationManager::get(const std::string& key) const {
         }
     }
     
-    // Fallback to English
     auto enIt = m_translations.find("en");
     if (enIt != m_translations.end()) {
         auto keyIt = enIt->second.find(key);
@@ -129,4 +128,4 @@ std::string tr(const std::string& key) {
     return LocalizationManager::instance().get(key);
 }
 
-} // namespace i18n
+}

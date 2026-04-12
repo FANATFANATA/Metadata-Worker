@@ -21,13 +21,11 @@ void showMenu() {
 }
 
 int main(int argc, char* argv[]) {
-    // Инициализация
     auto& cfg = config::ConfigManager::instance();
     cfg.load("config.json");
     
     setLanguage(cfg.getLanguage());
     
-    // Обработка аргументов командной строки
     if (argc > 1) {
         std::string arg = argv[1];
         if (arg == "--help" || arg == "-h") {
@@ -60,7 +58,6 @@ int main(int argc, char* argv[]) {
         if (choice == "0" || choice.empty()) {
             break;
         } else if (choice == "1") {
-            // Выбор файла
             auto& recentFiles = cfg.get().recentFiles;
             std::string path = utils::selectFileFromRecent(recentFiles);
             
@@ -82,7 +79,6 @@ int main(int argc, char* argv[]) {
             std::cout << "Selected: " << path << std::endl;
             
         } else if (choice == "2") {
-            // Расшифровка
             if (currentFile.empty()) {
                 std::cout << "No file selected!" << std::endl;
                 continue;
@@ -107,7 +103,6 @@ int main(int argc, char* argv[]) {
             }
             
         } else if (choice == "3") {
-            // Анализ
             if (currentFile.empty()) {
                 std::cout << "No file selected!" << std::endl;
                 continue;
@@ -128,7 +123,6 @@ int main(int argc, char* argv[]) {
             
             if (info.unityVersion.has_value()) {
                 std::cout << tr("unity_version");
-                // TODO: Convert UnityVersion enum to string
                 std::cout << static_cast<int>(info.unityVersion.value()) << std::endl;
             }
             
@@ -138,7 +132,6 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    // Сохранение конфигурации
     cfg.save("config.json");
     
     std::cout << "Goodbye!" << std::endl;
