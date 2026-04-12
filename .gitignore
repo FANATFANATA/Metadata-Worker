@@ -1,22 +1,21 @@
 ```
 # Build artifacts
 build/
+cmake-build-*/
 CMakeFiles/
+CMakeCache.txt
+Makefile
+*.cmake
 *.o
-*.obj
 *.a
 *.so
+*.dylib
 *.dll
 *.exe
 *.out
 
 # Dependencies
-venv/
-.venv/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
+vendor/
 
 # Logs and temp files
 *.log
@@ -26,38 +25,24 @@ __pycache__/
 # Environment
 .env
 .env.local
-*.env.*
+.env.*
 
 # Editors
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # Coverage
-.coverage
 coverage/
 htmlcov/
+.coverage
 
-# Compression files
-*.zip
-*.gz
-*.tar
-*.tgz
-*.bz2
-*.xz
-*.7z
-*.rar
-*.zst
-*.lz4
-*.lzh
-*.cab
-*.arj
-*.rpm
-*.deb
-*.Z
-*.lz
-*.lzo
-*.tar.gz
-*.tar.bz2
-*.tar.xz
-*.tar.zst
+# Python artifacts (if any Python files exist in project)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
 ```
