@@ -4,7 +4,6 @@
 #include <sstream>
 #include <algorithm>
 
-// Простой JSON парсер (можно заменить на nlohmann/json)
 namespace {
 
 std::string trim(const std::string& str) {
@@ -15,7 +14,6 @@ std::string trim(const std::string& str) {
 }
 
 bool parseJsonString(const std::string& json, config::Config& cfg) {
-    // Очень упрощенный парсер JSON
     auto findValue = [&](const std::string& key) -> std::string {
         std::string searchKey = "\"" + key + "\"";
         size_t pos = json.find(searchKey);
@@ -57,7 +55,6 @@ bool parseJsonString(const std::string& json, config::Config& cfg) {
     std::string lastDir = findValue("last_output_dir");
     if (!lastDir.empty()) cfg.lastOutputDir = lastDir;
     
-    // Парсинг массива recent_files
     std::string recentStr = findValue("recent_files");
     if (!recentStr.empty() && recentStr[0] == '[') {
         size_t pos = 1;
@@ -95,7 +92,7 @@ std::string toJson(const config::Config& cfg) {
     return oss.str();
 }
 
-} // anonymous namespace
+}
 
 namespace config {
 
@@ -133,16 +130,13 @@ void ConfigManager::set(const Config& config) {
 }
 
 void ConfigManager::addRecentFile(const std::string& path) {
-    // Удаляем если уже есть
     auto it = std::find(m_config.recentFiles.begin(), m_config.recentFiles.end(), path);
     if (it != m_config.recentFiles.end()) {
         m_config.recentFiles.erase(it);
     }
     
-    // Добавляем в начало
     m_config.recentFiles.insert(m_config.recentFiles.begin(), path);
     
-    // Ограничиваем до 10 файлов
     if (m_config.recentFiles.size() > 10) {
         m_config.recentFiles.resize(10);
     }
@@ -160,4 +154,4 @@ bool ConfigManager::shouldCheckUpdates() const {
     return m_config.checkUpdates;
 }
 
-} // namespace config
+}
