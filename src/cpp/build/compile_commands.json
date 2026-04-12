@@ -1,0 +1,37 @@
+[
+{
+  "directory": "/workspace/src/cpp/build",
+  "command": "/usr/bin/c++ -D__LINUX__ -I/workspace/src/cpp/include -O3 -DNDEBUG -std=gnu++17 -o CMakeFiles/metadata_worker_lib.dir/src/cli_main.cpp.o -c /workspace/src/cpp/src/cli_main.cpp",
+  "file": "/workspace/src/cpp/src/cli_main.cpp"
+},
+{
+  "directory": "/workspace/src/cpp/build",
+  "command": "/usr/bin/c++ -D__LINUX__ -I/workspace/src/cpp/include -O3 -DNDEBUG -std=gnu++17 -o CMakeFiles/metadata_worker_lib.dir/src/metadata.cpp.o -c /workspace/src/cpp/src/metadata.cpp",
+  "file": "/workspace/src/cpp/src/metadata.cpp"
+},
+{
+  "directory": "/workspace/src/cpp/build",
+  "command": "/usr/bin/c++ -D__LINUX__ -I/workspace/src/cpp/include -O3 -DNDEBUG -std=gnu++17 -o CMakeFiles/metadata_worker_lib.dir/src/decryptor.cpp.o -c /workspace/src/cpp/src/decryptor.cpp",
+  "file": "/workspace/src/cpp/src/decryptor.cpp"
+},
+{
+  "directory": "/workspace/src/cpp/build",
+  "command": "/usr/bin/c++ -D__LINUX__ -I/workspace/src/cpp/include -O3 -DNDEBUG -std=gnu++17 -o CMakeFiles/metadata_worker_lib.dir/src/config.cpp.o -c /workspace/src/cpp/src/config.cpp",
+  "file": "/workspace/src/cpp/src/config.cpp"
+},
+{
+  "directory": "/workspace/src/cpp/build",
+  "command": "/usr/bin/c++ -D__LINUX__ -I/workspace/src/cpp/include -O3 -DNDEBUG -std=gnu++17 -o CMakeFiles/metadata_worker_lib.dir/src/i18n.cpp.o -c /workspace/src/cpp/src/i18n.cpp",
+  "file": "/workspace/src/cpp/src/i18n.cpp"
+},
+{
+  "directory": "/workspace/src/cpp/build",
+  "command": "/usr/bin/c++ -D__LINUX__ -I/workspace/src/cpp/include -O3 -DNDEBUG -std=gnu++17 -o CMakeFiles/metadata_worker_lib.dir/src/utils.cpp.o -c /workspace/src/cpp/src/utils.cpp",
+  "file": "/workspace/src/cpp/src/utils.cpp"
+},
+{
+  "directory": "/workspace/src/cpp/build",
+  "command": "/usr/bin/c++  -I/workspace/src/cpp/include -O3 -DNDEBUG -std=gnu++17 -o CMakeFiles/metadata_worker_cli.dir/src/cli_main.cpp.o -c /workspace/src/cpp/src/cli_main.cpp",
+  "file": "/workspace/src/cpp/src/cli_main.cpp"
+}
+]
