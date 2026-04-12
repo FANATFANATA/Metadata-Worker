@@ -18,28 +18,17 @@ class ConfigManager {
 public:
     static ConfigManager& instance();
     
-    // Загрузка конфигурации
     bool load(const std::string& filePath);
-    
-    // Сохранение конфигурации
     bool save(const std::string& filePath);
     
-    // Получение значения
     const Config& get() const;
-    
-    // Установка значения
     void set(const Config& config);
     
-    // Добавление недавнего файла
     void addRecentFile(const std::string& path);
     
-    // Получение языка
     std::string getLanguage() const;
-    
-    // Установка языка
     void setLanguage(const std::string& lang);
     
-    // Проверка обновлений
     bool shouldCheckUpdates() const;
 
 private:
@@ -50,4 +39,4 @@ private:
     bool m_loaded = false;
 };
 
-} // namespace config
+}

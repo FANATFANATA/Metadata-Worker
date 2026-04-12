@@ -8,10 +8,8 @@
 
 namespace metadata {
 
-// Типы функций дешифровки
 using DecryptFunc = std::function<bool(std::vector<uint8_t>&)>;
 
-// Информация о методе дешифровки
 struct DecryptMethod {
     std::string name;
     std::string description;
@@ -23,21 +21,16 @@ public:
     Decryptor();
     ~Decryptor();
 
-    // Регистрация метода дешифровки
     void registerMethod(const std::string& name, 
                        const std::string& description,
                        DecryptFunc func);
     
-    // Дешифровка данными методами
     bool tryDecrypt(std::vector<uint8_t>& data, const std::string& methodName);
     
-    // Автоопределение и дешифровка
     bool autoDecrypt(std::vector<uint8_t>& data);
     
-    // Получение списка доступных методов
     std::vector<std::string> getAvailableMethods() const;
     
-    // Статические методы дешифровки
     static bool xorDecrypt(std::vector<uint8_t>& data, const std::vector<uint8_t>& key);
     static bool rotDecrypt(std::vector<uint8_t>& data, uint8_t shift);
     static bool customDecrypt1(std::vector<uint8_t>& data);
@@ -67,4 +60,4 @@ private:
     bool validateDecryption(const std::vector<uint8_t>& data);
 };
 
-} // namespace metadata
+}
