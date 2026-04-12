@@ -40,6 +40,13 @@ if(BUILD_CLI)
     add_executable(metadata_worker_cli src/cli_main.cpp)
     target_link_libraries(metadata_worker_cli PRIVATE metadata_worker_lib)
     set_target_properties(metadata_worker_cli PROPERTIES OUTPUT_NAME "metadata-worker")
+    
+    if(MSVC)
+        target_compile_options(metadata_worker_cli PRIVATE /MT$<$<CONFIG:Debug>:d>)
+        target_link_options(metadata_worker_cli PRIVATE /STATIC)
+    else()
+        target_link_options(metadata_worker_cli PRIVATE -static-libgcc -static-libstdc++)
+    endif()
 endif()
 
 if(Build_GUI)
