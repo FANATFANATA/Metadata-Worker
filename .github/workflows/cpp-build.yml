@@ -74,7 +74,7 @@ jobs:
       if: runner.os == 'Windows'
       run: |
         cd build
-        cp ${{ env.BUILD_TYPE }}/metadata-worker.exe ${{ matrix.artifact_name }}
+        cp metadata-worker.exe ${{ matrix.artifact_name }}
       shell: bash
 
     - name: Rename binary (Linux/macOS)

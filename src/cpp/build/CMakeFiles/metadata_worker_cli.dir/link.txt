@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/metadata_worker_cli.dir/src/cli_main.cpp.o -o metadata-worker  libmetadata_worker_lib.a 
