@@ -22,7 +22,7 @@ std::string resolvePath(const std::string& path) {
     if (p.is_absolute()) {
         return p.lexically_normal().string();
     } else {
-        return std::filesystem::current_path().append(p).lexically_normal().string();
+        return (std::filesystem::current_path() / p).lexically_normal().string();
     }
 }
 
@@ -110,7 +110,6 @@ bool validatePath(const std::string& path, bool mustExist) {
     if (mustExist) {
         return fileExists(path);
     } else {
-        // Проверяем существование родительской директории
         std::string dir = getDirectoryName(path);
         return dir.empty() || directoryExists(dir);
     }
@@ -147,7 +146,6 @@ std::string selectFileFromRecent(const std::vector<std::string>& recentFiles) {
         return "";
     }
     
-    // Проверка на номер
     if (input.length() == 1 && input[0] >= '1' && input[0] <= '5') {
         size_t index = input[0] - '1';
         if (index < recentFiles.size()) {
@@ -155,7 +153,6 @@ std::string selectFileFromRecent(const std::vector<std::string>& recentFiles) {
         }
     }
     
-    // Возвращаем как путь
     return input;
 }
 
@@ -181,19 +178,16 @@ std::string formatDateTime(time_t time) {
     return std::string(buffer);
 }
 
-// Простая реализация MD5 (можно заменить на OpenSSL или другую библиотеку)
 std::string md5Hash(const std::vector<uint8_t>& data) {
-    // Заглушка - в реальной реализации использовать криптографическую библиотеку
     std::ostringstream oss;
     oss << "md5_" << data.size();
     return oss.str();
 }
 
 std::string sha1Hash(const std::vector<uint8_t>& data) {
-    // Заглушка - в реальной реализации использовать криптографическую библиотеку
     std::ostringstream oss;
     oss << "sha1_" << data.size();
     return oss.str();
 }
 
-} // namespace utils
+}

@@ -9,7 +9,6 @@
 
 namespace metadata {
 
-// Версии Unity
 enum class UnityVersion : uint16_t {
     Unity53 = 16,
     Unity54 = 17,
@@ -41,7 +40,6 @@ enum class UnityVersion : uint16_t {
     Unknown = 0
 };
 
-// Типы данных метаданных
 struct StringLiteral {
     uint32_t offset;
     std::string value;
@@ -77,12 +75,11 @@ struct AssemblyInfo {
     std::string name;
     std::string culture;
     std::vector<uint8_t> publicKey;
-    uint32_t version[4];  // major, minor, build, revision
+    uint32_t version[4];
 };
 
-// Заголовок метаданных
 struct MetadataHeader {
-    uint32_t magic;           // 0xF1FA11FA
+    uint32_t magic;
     uint32_t version;
     uint32_t size;
     uint32_t stringOffset;
@@ -107,7 +104,6 @@ struct MetadataHeader {
     uint32_t tablesSize;
 };
 
-// Результат анализа
 struct MetadataInfo {
     std::string filePath;
     bool isEncrypted;
@@ -121,10 +117,9 @@ struct MetadataInfo {
     std::string errorMessage;
 };
 
-// Константы
 constexpr uint32_t METADATA_MAGIC = 0xF1FA11FA;
 constexpr uint8_t METADATA_SIGNATURE[12] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00
 };
 
-} // namespace metadata
+}

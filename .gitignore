@@ -1,24 +1,21 @@
 ```
-# Build artifacts
+# CMake build artifacts
+src/cpp/build/
+CMakeCache.txt
 CMakeFiles/
-cmake-build-*/
 Makefile
-*.o
-*.obj
-*.a
-*.so
-*.dylib
-*.dll
-*.exe
-build/
-dist/
+cmake_install.cmake
+compile_commands.json
 
-# Dependencies
-venv/
-.venv/
-__pycache__/
-*.egg-info/
-.Python
+# Compiled binaries
+*.a
+*.o
+*.out
+*.bin
+
+# IDE files
+.vscode/
+.idea/
 
 # Logs and temp files
 *.log
@@ -29,25 +26,4 @@ __pycache__/
 .env
 .env.local
 *.env.*
-
-# Editors
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Python specific
-*.pyc
-*.pyo
-*.pyd
-__pycache__/
-.coverage
-htmlcov/
-.coverage.*
-.pytest_cache/
-.mypy_cache/
 ```

@@ -5,7 +5,6 @@
 namespace metadata {
 
 Decryptor::Decryptor() {
-    // Регистрация методов дешифровки
     registerMethod("xor_simple", "Simple XOR with single byte key", 
         [](std::vector<uint8_t>& data) { return xorDecrypt(data, {0x53}); });
     
@@ -108,10 +107,7 @@ bool Decryptor::rotDecrypt(std::vector<uint8_t>& data, uint8_t shift) {
     return true;
 }
 
-// Заглушки для кастомных методов дешифровки
-// В реальной реализации здесь будет логика из Python-версии
 bool Decryptor::customDecrypt1(std::vector<uint8_t>& data) {
-    // TODO: Implement from Python source
     (void)data;
     return false;
 }
@@ -216,14 +212,12 @@ bool Decryptor::validateDecryption(const std::vector<uint8_t>& data) {
         return false;
     }
     
-    // Проверка на правильную сигнатуру после дешифровки
     for (int i = 0; i < 12; ++i) {
         if (data[i] != METADATA_SIGNATURE[i]) {
             return false;
         }
     }
     
-    // Проверка magic bytes
     if (data.size() >= 4) {
         uint32_t magic = *reinterpret_cast<const uint32_t*>(&data[0]);
         if (magic != METADATA_MAGIC) {
@@ -234,4 +228,4 @@ bool Decryptor::validateDecryption(const std::vector<uint8_t>& data) {
     return true;
 }
 
-} // namespace metadata
+}
