@@ -3,7 +3,7 @@
 **[english](#english)** | **[русский](#russian)**
 
 <a id="english"></a>
-## englist
+## english
 
 a python tool for working with Unity IL2CPP global-metadata.dat files.
 
