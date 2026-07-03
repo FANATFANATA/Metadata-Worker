@@ -17,6 +17,12 @@ thanks to [Michel-M](https://github.com/Michel-M-code) for his [Metadata-Decrypt
 pip install -r requirments.txt
 ```
 
+and:
+
+```
+python main.py
+```
+
 <a id="russian"></a>
 ## русский
 
@@ -30,4 +36,10 @@ pip install -r requirments.txt
 
 ```
 pip install -r requirments.txt
+```
+
+после:
+
+```
+python main.py
 ```
