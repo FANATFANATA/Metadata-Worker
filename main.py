@@ -6,6 +6,7 @@ import os
 import struct
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
 
@@ -70,6 +71,11 @@ DEFAULT_CONFIG = {
 }
 config = DEFAULT_CONFIG.copy()
 logger = None
+ELFTOOLS_AVAILABLE = False
+
+Style = None
+Fore = None
+tqdm = None
 
 COLOR_PRIMARY = "\033[38;2;188;39;50m"
 COLOR_SUCCESS = "\033[38;2;188;39;50m"
@@ -200,10 +206,13 @@ def clear_screen():
 
 
 def select_file_cli(title: str) -> str:
-    print(f"{COLOR_PRIMARY}{title}{Style.RESET_ALL}")
+    if Style:
+        print(f"{COLOR_PRIMARY}{title}{Style.RESET_ALL}")
+    else:
+        print(title)
     recent = config.get("recent_files", [])
     if recent:
-        print(f"{COLOR_PRIMARY}Recent files:{Style.RESET_ALL}")
+        print(f"{COLOR_PRIMARY}Recent files:{Style.RESET_ALL}" if Style else "Recent files:")
         for i, path in enumerate(recent[:5], 1):
             print(f"  [{i}] {path}")
     while True:
@@ -218,11 +227,14 @@ def select_file_cli(title: str) -> str:
         if os.path.isfile(path):
             add_recent_file(path)
             return path
-        print(f"{COLOR_ERROR}{i18n.get('file_not_found')}{Style.RESET_ALL}")
+        print(f"{COLOR_ERROR}{i18n.get('file_not_found')}{Style.RESET_ALL}" if Style else i18n.get('file_not_found'))
 
 
 def select_save_file_cli(title: str, defaultextension: str = "") -> str:
-    print(f"{COLOR_PRIMARY}{title}{Style.RESET_ALL}")
+    if Style:
+        print(f"{COLOR_PRIMARY}{title}{Style.RESET_ALL}")
+    else:
+        print(title)
     while True:
         try:
             path = input(i18n.get("path_to_save")).strip()
@@ -234,11 +246,14 @@ def select_save_file_cli(title: str, defaultextension: str = "") -> str:
             if defaultextension and not path.endswith(defaultextension):
                 path += defaultextension
             return path
-        print(f"{COLOR_ERROR}{i18n.get('enter_path')}{Style.RESET_ALL}")
+        print(f"{COLOR_ERROR}{i18n.get('enter_path')}{Style.RESET_ALL}" if Style else i18n.get('enter_path'))
 
 
 def select_folder_cli(title: str) -> str:
-    print(f"{COLOR_PRIMARY}{title}{Style.RESET_ALL}")
+    if Style:
+        print(f"{COLOR_PRIMARY}{title}{Style.RESET_ALL}")
+    else:
+        print(title)
     while True:
         try:
             path = input(i18n.get("path_to_folder")).strip()
@@ -248,7 +263,7 @@ def select_folder_cli(title: str) -> str:
             return ""
         if os.path.isdir(path):
             return path
-        print(f"{COLOR_ERROR}{i18n.get('folder_not_found')}{Style.RESET_ALL}")
+        print(f"{COLOR_ERROR}{i18n.get('folder_not_found')}{Style.RESET_ALL}" if Style else i18n.get('folder_not_found'))
 
 
 def select_file(title: str, filetypes: list) -> str:
@@ -726,7 +741,9 @@ def apply_heuristic(
         for i in range(0, len(data), step):
             try:
                 fields = struct.unpack_from(struct_sig, data, i)
-                entries.append(fields[0] if len(struct_sig) <= 1 else fields)
+                entries.append(
+                    fields[0] if len(struct_sig) <= 1 else fields
+                )
             except struct.error:
                 break
         if callback and callback(entries):
@@ -741,6 +758,67 @@ def apply_heuristic(
     print(f"{COLOR_PRIMARY}Found {name} at offset {result[0]}{Style.RESET_ALL}")
     log_debug(f"Found {name} at {result[0]}")
     return result, remaining
+
+
+def unshuffle_metadata_header(header: bytes, full_size: int) -> Optional[List[int]]:
+    if len(header) < 256:
+        return None
+    ints = list(struct.unpack("<64I", header[:256]))
+    offset_instances = {}
+    highest_offset = 0
+    for val in ints:
+        offset_instances[val] = offset_instances.get(val, 0) + 1
+        if offset_instances[val] == 3 and val > 1000000:
+            highest_offset = val
+            break
+    if highest_offset == 0:
+        return None
+    bytes_to_end = full_size - highest_offset
+    last_size = 0
+    for val in ints:
+        if val % 4 != 0 or abs(bytes_to_end - val) > 4:
+            continue
+        last_size = val
+        break
+    if last_size == 0:
+        return None
+    pairs = [(highest_offset, last_size), (highest_offset, 0), (highest_offset, 0)]
+    offsets_left = 28
+    current_offset = highest_offset
+    for _ in range(28):
+        found = False
+        for i in range(len(ints)):
+            if ints[i] <= 0 or ints[i] % 4 != 0:
+                continue
+            for j in range(len(ints)):
+                if ints[j] <= 0:
+                    continue
+                prev_offset = ints[j]
+                prev_size = ints[i]
+                if len(pairs) in (25, 28, 29, 30):
+                    prev_offset, prev_size = min(prev_offset, prev_size), max(prev_offset, prev_size)
+                else:
+                    prev_offset, prev_size = max(prev_offset, prev_size), min(prev_offset, prev_size)
+                delta = current_offset - prev_offset
+                if abs(prev_size - delta) <= 4:
+                    pairs.append((prev_offset, prev_size))
+                    current_offset = prev_offset
+                    offsets_left -= 1
+                    ints[i] = 0
+                    ints[j] = 0
+                    found = True
+                    break
+            if found:
+                break
+        if not found:
+            break
+    if offsets_left != 0:
+        return None
+    pairs.reverse()
+    offsets = [pair[0] for pair in pairs[:29]]
+    if len(offsets) != 29 or any(off == 0 for off in offsets):
+        return None
+    return offsets
 
 
 def decrypt_metadata(
@@ -792,7 +870,7 @@ def decrypt_metadata(
                     print(
                         f"{COLOR_WARNING}Offset {excluded} not found in candidates{Style.RESET_ALL}"
                     )
-        offsets_to_sizes: List[Tuple[int, int]] = []
+
         only_sizes = [
             x
             for x in [
@@ -800,24 +878,48 @@ def decrypt_metadata(
             ]
             if x not in offset_candidates
         ]
-        for offset in offset_candidates:
-            search_pool = (
-                only_sizes
-                if offset != 256
-                else [
-                    struct.unpack("<I", metadata[i : i + 4])[0]
-                    for i in range(0, 256, 4)
-                ]
-            )
-            for size in search_pool:
-                if size != offset and size != 0 and size < len(metadata) / 3:
-                    if offset + size == len(metadata):
-                        offsets_to_sizes.append((offset, size))
+
+        offsets_to_sizes: List[Tuple[int, int]] = []
+        for possible_offset in offset_candidates:
+            found = False
+            size_search_pool = only_sizes if possible_offset != 256 else [
+                struct.unpack("<I", metadata[i : i + 4])[0] for i in range(0, 256, 4)
+            ]
+            for size in size_search_pool:
+                if size != possible_offset and size != 0 and size < len(metadata) / 3:
+                    if size + possible_offset == len(metadata):
+                        offsets_to_sizes.append((possible_offset, size))
+                        found = True
                         break
-                    for next_off in offset_candidates:
-                        if offset + size == next_off:
-                            offsets_to_sizes.append((offset, size))
+                    for next_offset in offset_candidates:
+                        if possible_offset + size == next_offset and possible_offset != next_offset:
+                            offsets_to_sizes.append((possible_offset, size))
+                            found = True
                             break
+                if found:
+                    break
+            if not found:
+                is_256 = possible_offset == 256
+                is_big_enough = possible_offset > len(metadata) / 3
+                next_offset = None
+                try:
+                    idx = offset_candidates.index(possible_offset)
+                    if idx + 1 < len(offset_candidates):
+                        next_offset = offset_candidates[idx + 1]
+                except ValueError:
+                    pass
+                is_size_big_enough = (next_offset is not None) and (next_offset - possible_offset > 4096)
+                did_last_add_up = False
+                if offsets_to_sizes:
+                    last_pair_sum = sum(offsets_to_sizes[-1])
+                    did_last_add_up = last_pair_sum == possible_offset
+                if (is_256 or is_big_enough or is_size_big_enough) and (did_last_add_up or is_256 or not offsets_to_sizes):
+                    size = (next_offset - possible_offset) if next_offset else len(metadata) - possible_offset
+                    offsets_to_sizes.append((possible_offset, size))
+                    print(f"{COLOR_PRIMARY}Offset {possible_offset} added with approximate size {size}{Style.RESET_ALL}")
+                else:
+                    only_sizes.append(possible_offset)
+
         offsets_to_sizes = sorted(offsets_to_sizes, key=lambda x: x[0])
         print(
             f"{COLOR_PRIMARY}Validated {len(offsets_to_sizes)} offset/size pairs{Style.RESET_ALL}"
@@ -857,6 +959,107 @@ def decrypt_metadata(
         def ascending_cb(e):
             return all(e[i][0] <= e[i + 1][0] for i in range(len(e) - 1)) if e else True
 
+        def nestedTypes_cb(e):
+            right_count, last_index, attempts = 0, 0, 0
+            for idx in e:
+                attempts += 1
+                if idx > last_index:
+                    right_count += 1
+                else:
+                    right_count -= 1
+                if right_count > 256:
+                    return True
+                if right_count < -4 or idx > 0x01000000 or attempts > 512:
+                    return False
+                last_index = idx
+            return True
+
+        def interfaces_cb(e):
+            for val in e:
+                if 1024576 < val or val < 256:
+                    return False
+            return True
+
+        def vtableMethods_cb(e):
+            for val in e:
+                if val != 1 and val & 0xE0000000 == 0:
+                    return False
+            return True
+
+        def interfaceOffsets_cb(e):
+            for type_idx, off in e:
+                if off > 256 or 256 > type_idx or type_idx > 65535:
+                    return False
+            return True
+
+        def typeDefinitions_cb(e):
+            for entry in e:
+                if entry[25] & 0xFF000000 != 0x02000000:
+                    return False
+            return True
+
+        def images_cb(e):
+            entries = e[:len(e) - 2]
+            for entry in entries:
+                if entry[7] != 1:
+                    return False
+            return True
+
+        def fieldRefs_cb(e):
+            for type_idx, field_idx in e:
+                if type_idx < 256 or field_idx > 2048:
+                    return False
+            return True
+
+        def referencedAssemblies_cb(e):
+            if not e:
+                return True
+            mean = sum(e) / len(e)
+            for val in e:
+                if val > 256 or not 30 < mean < 40:
+                    return False
+            return True
+
+        def attributeDataRange_cb(e):
+            right = 0
+            last_idx = e[0][1] if e else 0
+            if last_idx != 0:
+                return False
+            for token, idx in e:
+                if token & 0xFF000000 == 0:
+                    right -= 10
+                else:
+                    right += 2
+                if idx < last_idx:
+                    right -= 2
+                else:
+                    right += 1
+                if right > 2048:
+                    return True
+                elif right < -16:
+                    return False
+            return True
+
+        def unresolvedIndirectCallParameterTypes_cb(e):
+            for val in e:
+                if val < 256 or val > 70000:
+                    return False
+            return True
+
+        def unresolvedIndirectCallParameterTypeRanges_cb(e):
+            expected = e[0][0] if e else 0
+            for start, length in e:
+                if start != expected:
+                    return False
+                expected += length
+            return True
+
+        def exportedTypeDefinitions_cb(e):
+            for val in e:
+                if val < 64 or val > 131072:
+                    return False
+            return True
+
         heuristics = [
             ("stringLiteral", string_literal_cb, "<II", True, None),
             (
@@ -885,20 +1088,20 @@ def decrypt_metadata(
             ("genericParameters", None, "<IIHHHH", True, None),
             ("genericParameterContraints", None, "<I", True, None),
             ("genericContainers", None, "<IIII", False, None),
-            ("nestedTypes", None, "<I", False, None),
-            ("interfaces", None, "<I", False, None),
-            ("vtableMethods", None, "<I", False, None),
-            ("interfaceOffsets", None, "<II", False, None),
-            ("typeDefinitions", None, "<IIIIIIIIIIIIIIIIHHHHHHHHII", False, None),
-            ("images", None, "<IIIIIIIIII", False, None),
+            ("nestedTypes", nestedTypes_cb, "<I", False, None),
+            ("interfaces", interfaces_cb, "<I", False, None),
+            ("vtableMethods", vtableMethods_cb, "<I", False, None),
+            ("interfaceOffsets", interfaceOffsets_cb, "<II", False, None),
+            ("typeDefinitions", typeDefinitions_cb, "<IIIIIIIIIIIIIIIIHHHHHHHHII", False, None),
+            ("images", images_cb, "<IIIIIIIIII", False, None),
             ("assemblies", token_cb(0x20000000), "<IIIIIIIIIIIIIIII", False, None),
-            ("fieldRefs", None, "<II", False, None),
-            ("referencedAssemblies", None, "<I", False, None),
+            ("fieldRefs", fieldRefs_cb, "<II", False, None),
+            ("referencedAssemblies", referencedAssemblies_cb, "<I", False, None),
             ("attributeData", None, None, False, b"NewFragmentBox"),
-            ("attributeDataRange", None, "<II", False, None),
-            ("unresolvedIndirectCallParameterTypes", None, "<I", False, None),
-            ("unresolvedIndirectCallParameterTypeRanges", None, "<II", False, None),
-            ("exportedTypeDefinitions", None, "<I", False, None),
+            ("attributeDataRange", attributeDataRange_cb, "<II", False, None),
+            ("unresolvedIndirectCallParameterTypes", unresolvedIndirectCallParameterTypes_cb, "<I", False, None),
+            ("unresolvedIndirectCallParameterTypeRanges", unresolvedIndirectCallParameterTypeRanges_cb, "<II", False, None),
+            ("exportedTypeDefinitions", exportedTypeDefinitions_cb, "<I", False, None),
         ]
         for h_name, h_cb, h_sig, h_pref, h_marker in tqdm(
             heuristics, desc="Applying heuristics", colour="green"
@@ -908,10 +1111,21 @@ def decrypt_metadata(
             )
             if result:
                 reconstructed_offsets.append(result[0])
+
+        if len(reconstructed_offsets) < 28:
+            print(f"{COLOR_WARNING}Heuristics only found {len(reconstructed_offsets)} sections, trying unshuffle...{Style.RESET_ALL}")
+            unshuffled = unshuffle_metadata_header(metadata[:256], len(metadata))
+            if unshuffled:
+                reconstructed_offsets = unshuffled
+                print(f"{COLOR_SUCCESS}Unshuffle succeeded.{Style.RESET_ALL}")
+            else:
+                print(f"{COLOR_WARNING}Unshuffle also failed.{Style.RESET_ALL}")
+
         if len(reconstructed_offsets) < 28:
             print(
                 f"{COLOR_WARNING}Warning: Only found {len(reconstructed_offsets)} sections (expected 29){Style.RESET_ALL}"
             )
+
         pos = 0
 
         def add_header_size(size):
@@ -967,6 +1181,8 @@ def decrypt_metadata(
 
 
 def print_menu():
+    if not Style:
+        return
     print()
     print(f"{COLOR_PRIMARY}┌{'─'*62}┐{Style.RESET_ALL}")
     print(
@@ -1091,7 +1307,10 @@ def menu_info():
 
 def interactive_menu():
     clear_screen()
-    print(COLOR_PRIMARY + i18n.BANNER + Style.RESET_ALL)
+    if Style:
+        print(COLOR_PRIMARY + i18n.BANNER + Style.RESET_ALL)
+    else:
+        print(i18n.BANNER)
     loading_animation()
     while True:
         print_menu()
@@ -1126,16 +1345,33 @@ def interactive_menu():
         except EOFError:
             break
         clear_screen()
-        print(COLOR_PRIMARY + i18n.BANNER + Style.RESET_ALL)
+        if Style:
+            print(COLOR_PRIMARY + i18n.BANNER + Style.RESET_ALL)
+        else:
+            print(i18n.BANNER)
 
 
 def main():
+    global Style, Fore, tqdm, ELFTOOLS_AVAILABLE
     ensure_dependency("colorama")
     ensure_dependency("tqdm")
     ensure_dependency("pyelftools", "elftools")
-    global Style
-    from colorama import Fore, Style
+    from colorama import Fore as _Fore, Style as _Style
     from colorama import init as colorama_init
+    from tqdm import tqdm as _tqdm
+
+    Style = _Style
+    Fore = _Fore
+    tqdm = _tqdm
+    globals()["Style"] = Style
+    globals()["Fore"] = Fore
+    globals()["tqdm"] = tqdm
+    try:
+        from elftools.elf.elffile import ELFFile
+        globals()["ELFFile"] = ELFFile
+        ELFTOOLS_AVAILABLE = True
+    except ImportError:
+        ELFTOOLS_AVAILABLE = False
 
     colorama_init(autoreset=True)
     setup_logging()
@@ -1214,9 +1450,7 @@ def main():
                 )
             decrypted, key = try_decrypt_metadata(data)
             if key:
-                print(
-                    f"{COLOR_SUCCESS}{i18n.get('possible_encryption')}{key}{Style.RESET_ALL}"
-                )
+                print(f"{COLOR_SUCCESS}{i18n.get('possible_encryption')}{key}{Style.RESET_ALL}")
         elif args.command == "menu":
             interactive_menu()
     else:
