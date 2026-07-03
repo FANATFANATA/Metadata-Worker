@@ -797,9 +797,9 @@ def unshuffle_metadata_header(header: bytes, full_size: int) -> Optional[List[in
     if last_size == 0:
         return None
     pairs = [(highest_offset, last_size), (highest_offset, 0), (highest_offset, 0)]
-    offsets_left = 28
+    offsets_left = 26
     current_offset = highest_offset
-    for _ in range(28):
+    for _ in range(26):
         found = False
         for i in range(len(ints)):
             if ints[i] <= 0 or ints[i] % 4 != 0:
@@ -1166,7 +1166,7 @@ def decrypt_metadata(
             if result:
                 reconstructed_offsets.append(result[0])
 
-        if len(reconstructed_offsets) < 28:
+        if len(reconstructed_offsets) < 29:
             print(
                 f"{COLOR_WARNING}Heuristics only found {len(reconstructed_offsets)} sections, trying unshuffle...{Style.RESET_ALL}"
             )
@@ -1177,7 +1177,7 @@ def decrypt_metadata(
             else:
                 print(f"{COLOR_WARNING}Unshuffle also failed.{Style.RESET_ALL}")
 
-        if len(reconstructed_offsets) < 28:
+        if len(reconstructed_offsets) < 29:
             print(
                 f"{COLOR_WARNING}Warning: Only found {len(reconstructed_offsets)} sections (expected 29){Style.RESET_ALL}"
             )
@@ -1195,7 +1195,8 @@ def decrypt_metadata(
                 pos += 8
 
         offset_lookup = sorted(reconstructed_offsets)
-        for i in range(min(28, len(reconstructed_offsets))):
+        num_data_sections = min(29, len(reconstructed_offsets))
+        for i in range(num_data_sections):
             offset = reconstructed_offsets[i]
             try:
                 idx = offset_lookup.index(offset)
@@ -1208,20 +1209,10 @@ def decrypt_metadata(
                 size = len(metadata) - offset
             add_header_size(size)
             reconstructed += metadata[offset : offset + size]
-        for _ in range(2):
+
+        for _ in range(31 - num_data_sections):
             add_header_size(0)
-        if reconstructed_offsets:
-            last_offset = reconstructed_offsets[-1]
-            last_size = len(metadata) - last_offset
-            add_header_size(last_size)
-            reconstructed += metadata[last_offset : last_offset + last_size]
-        else:
-            add_header_size(len(metadata))
-            reconstructed += metadata
-        if len(reconstructed) >= 256:
-            reconstructed[252:256] = struct.pack(
-                "<I", len(metadata) - struct.unpack("<I", reconstructed[248:252])[0]
-            )
+
         if os.path.isdir(output_path):
             output_path = os.path.join(output_path, "output-metadata.dat")
         with open(output_path, "wb") as f:
