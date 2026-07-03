@@ -11,6 +11,12 @@ Telegram - [@DanyaVoredom](https://t.me/DanyaVoredom)
 
 thanks to [Michel-M](https://github.com/Michel-M-code) for his [Metadata-Decryptor](https://github.com/Michel-M-code/Metadata-Decryptor)
 
+### run
+
+```
+pip install -r requirments.txt
+```
+
 <a id="russian"></a>
 ## русский
 
@@ -19,3 +25,9 @@ thanks to [Michel-M](https://github.com/Michel-M-code) for his [Metadata-Decrypt
 - Telegram: [@DanyaVoredom](https://t.me/DanyaVoredom)
 
 спасибо [Michel-M](https://github.com/Michel-M-code) за его проект [Metadata-Decryptor](https://github.com/Michel-M-code/Metadata-Decryptor)
+
+### запуск
+
+```
+pip install -r requirments.txt
+```
