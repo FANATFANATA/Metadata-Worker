@@ -15,7 +15,7 @@ thanks to [Michel-M](https://github.com/Michel-M-code) for his [Metadata-Decrypt
 ### run
 
 ```
-pip install -r requirments.txt
+pip install -r requirements.txt
 ```
 
 and:
@@ -37,7 +37,7 @@ python main.py
 ### запуск
 
 ```
-pip install -r requirments.txt
+pip install -r requirements.txt
 ```
 
 после:

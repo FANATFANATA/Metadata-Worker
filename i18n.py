@@ -1,6 +1,4 @@
-LANGUAGES = {
-    "en": {
-        "banner": """
+BANNER = """
  █     █░    ▒█████      ██▀███      ██ ▄█▀   ▓█████     ██▀███
 ▓█░ █ ░█░   ▒██▒  ██▒   ▓██ ▒ ██▒    ██▄█▒    ▓█   ▀    ▓██ ▒ ██▒
 ▒█░ █ ░█    ▒██░  ██▒   ▓██ ░▄█ ▒   ▓███▄░    ▒███      ▓██ ░▄█ ▒
@@ -10,7 +8,10 @@ LANGUAGES = {
   ▒ ░ ░       ░ ▒ ▒░      ░▒ ░ ▒░   ░ ░▒ ▒░    ░ ░  ░     ░▒ ░ ▒░
   ░   ░     ░ ░ ░ ▒       ░░   ░    ░ ░░ ░       ░        ░░   ░
     ░           ░ ░        ░        ░  ░         ░  ░      ░
-""",
+"""
+
+LANGUAGES = {
+    "en": {
         "path_to_file": "Path to file (or 'q' to cancel): ",
         "path_to_save": "Path to save (or 'q' to cancel): ",
         "path_to_folder": "Path to folder (or 'q' to cancel): ",
@@ -20,15 +21,11 @@ LANGUAGES = {
         "select_libunity": "Select libunity.so",
         "select_encrypted": "Select encrypted metadata",
         "select_metadata": "Select metadata file",
-        "select_apk": "Select APK file or folder",
         "save_metadata": "Save metadata",
         "save_decrypted": "Save decrypted metadata",
         "max_size": "Max size (30000000): ",
-        "force_extract": "Force extract if encrypted? (y/N): ",
         "input": "Input: ",
         "file": "File: ",
-        "apk": "APK: ",
-        "folder": "Folder: ",
         "libunity": "libunity.so: ",
         "no_file_selected": "Error: No file selected",
         "no_output_path": "Error: No output path selected",
@@ -39,15 +36,11 @@ LANGUAGES = {
         "menu_extract": "Extract metadata from libunity.so",
         "menu_decrypt": "Decrypt metadata",
         "menu_info": "Show metadata info",
-        "menu_apk": "Extract from APK/folder",
         "menu_switch_lang": "Switch Language / Сменить язык",
-        "menu_theme": "Select Theme",
         "menu_exit": "Exit",
         "extract_title": "Extract Metadata from libunity.so",
         "decrypt_title": "Decrypt Metadata",
         "info_title": "Metadata Info",
-        "apk_title": "Extract from APK/Folder",
-        "apk_select": "Select APK file or unpacked folder",
         "error": "Error: ",
         "metadata_info_title": "Metadata Info",
         "magic": "Magic: ",
@@ -80,17 +73,6 @@ LANGUAGES = {
         "lang_changed": "Language changed to ",
     },
     "ru": {
-        "banner": """
- █     █░    ▒█████      ██▀███      ██ ▄█▀   ▓█████     ██▀███
-▓█░ █ ░█░   ▒██▒  ██▒   ▓██ ▒ ██▒    ██▄█▒    ▓█   ▀    ▓██ ▒ ██▒
-▒█░ █ ░█    ▒██░  ██▒   ▓██ ░▄█ ▒   ▓███▄░    ▒███      ▓██ ░▄█ ▒
-░█░ █ ░█    ▒██   ██░   ▒██▀▀█▄     ▓██ █▄    ▒▓█  ▄    ▒██▀▀█▄
-░░██▒██▓    ░ ████▓▒░   ░██▓ ▒██▒   ▒██▒ █▄   ░▒████▒   ░██▓ ▒██▒
-░ ▓░▒ ▒     ░ ▒░▒░▒░    ░ ▒▓ ░▒▓░   ▒ ▒▒ ▓▒   ░░ ▒░ ░   ░ ▒▓ ░▒▓░
-  ▒ ░ ░       ░ ▒ ▒░      ░▒ ░ ▒░   ░ ░▒ ▒░    ░ ░  ░     ░▒ ░ ▒░
-  ░   ░     ░ ░ ░ ▒       ░░   ░    ░ ░░ ░       ░        ░░   ░
-    ░           ░ ░        ░        ░  ░         ░  ░      ░
-""",
         "path_to_file": "Путь к файлу (или 'q' для отмены): ",
         "path_to_save": "Путь для сохранения (или 'q' для отмены): ",
         "path_to_folder": "Путь к папке (или 'q' для отмены): ",
@@ -100,15 +82,11 @@ LANGUAGES = {
         "select_libunity": "Выберите libunity.so",
         "select_encrypted": "Выберите зашифрованные метаданные",
         "select_metadata": "Выберите файл метаданных",
-        "select_apk": "Выберите APK файл или папку",
         "save_metadata": "Сохранить метаданные",
         "save_decrypted": "Сохранить расшифрованные метаданные",
         "max_size": "Макс размер (30000000): ",
-        "force_extract": "Извлечь даже если зашифровано? (y/N): ",
         "input": "Вход: ",
         "file": "Файл: ",
-        "apk": "APK: ",
-        "folder": "Папка: ",
         "libunity": "libunity.so: ",
         "no_file_selected": "Ошибка: Файл не выбран",
         "no_output_path": "Ошибка: Путь вывода не выбран",
@@ -119,15 +97,11 @@ LANGUAGES = {
         "menu_extract": "Извлечь метаданные из libunity.so",
         "menu_decrypt": "Расшифровать метаданные",
         "menu_info": "Показать информацию о метаданных",
-        "menu_apk": "Извлечь из APK/папки",
         "menu_switch_lang": "Сменить язык / Switch Language",
-        "menu_theme": "Выбрать тему",
         "menu_exit": "Выход",
         "extract_title": "Извлечение метаданных из libunity.so",
         "decrypt_title": "Расшифровка метаданных",
         "info_title": "Информация о метаданных",
-        "apk_title": "Извлечение из APK/папки",
-        "apk_select": "Выберите APK файл или распакованную папку",
         "error": "Ошибка: ",
         "metadata_info_title": "Информация о метаданных",
         "magic": "Magic: ",
