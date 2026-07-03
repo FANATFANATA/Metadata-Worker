@@ -1,3 +1,4 @@
 /.gig*
 /metadata_decryptor.py
 /metadata-worker.log
+/__pycache__
