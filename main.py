@@ -81,11 +81,11 @@ DEFAULT_CONFIG = {
 config = DEFAULT_CONFIG.copy()
 logger = None
 
-COLOR_PRIMARY = Fore.CYAN
-COLOR_SUCCESS = Fore.GREEN
-COLOR_WARNING = Fore.YELLOW
-COLOR_ERROR = Fore.RED
-COLOR_ACCENT = Fore.MAGENTA
+COLOR_PRIMARY = "\033[38;2;188;39;50m"
+COLOR_SUCCESS = "\033[38;2;188;39;50m"
+COLOR_WARNING = "\033[38;2;188;39;50m"
+COLOR_ERROR = "\033[38;2;188;39;50m"
+COLOR_ACCENT = "\033[38;2;188;39;50m"
 
 
 def setup_logging():
@@ -951,32 +951,32 @@ def decrypt_metadata(
 
 def print_menu():
     print()
-    print(f"{COLOR_PRIMARY}╔{'═'*62}╗{Style.RESET_ALL}")
+    print(f"{COLOR_PRIMARY}┌{'─'*62}┐{Style.RESET_ALL}")
     print(
-        f"{COLOR_PRIMARY}║{Style.RESET_ALL}  {COLOR_SUCCESS}1{Style.RESET_ALL}. {i18n.get('menu_extract'): <57}{COLOR_PRIMARY}║{Style.RESET_ALL}"
+        f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {COLOR_SUCCESS}1{Style.RESET_ALL}. {i18n.get('menu_extract'): <57}{COLOR_PRIMARY}│{Style.RESET_ALL}"
     )
     print(
-        f"{COLOR_PRIMARY}║{Style.RESET_ALL}  {COLOR_SUCCESS}2{Style.RESET_ALL}. {i18n.get('menu_decrypt'): <57}{COLOR_PRIMARY}║{Style.RESET_ALL}"
+        f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {COLOR_SUCCESS}2{Style.RESET_ALL}. {i18n.get('menu_decrypt'): <57}{COLOR_PRIMARY}│{Style.RESET_ALL}"
     )
     print(
-        f"{COLOR_PRIMARY}║{Style.RESET_ALL}  {COLOR_SUCCESS}3{Style.RESET_ALL}. {i18n.get('menu_info'): <57}{COLOR_PRIMARY}║{Style.RESET_ALL}"
+        f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {COLOR_SUCCESS}3{Style.RESET_ALL}. {i18n.get('menu_info'): <57}{COLOR_PRIMARY}│{Style.RESET_ALL}"
     )
     print(
-        f"{COLOR_PRIMARY}║{Style.RESET_ALL}  {COLOR_WARNING}4{Style.RESET_ALL}. {i18n.get('menu_switch_lang'): <57}{COLOR_PRIMARY}║{Style.RESET_ALL}"
+        f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {COLOR_WARNING}4{Style.RESET_ALL}. {i18n.get('menu_switch_lang'): <57}{COLOR_PRIMARY}│{Style.RESET_ALL}"
     )
     print(
-        f"{COLOR_PRIMARY}║{Style.RESET_ALL}  {COLOR_ERROR}0{Style.RESET_ALL}. {i18n.get('menu_exit'): <57}{COLOR_PRIMARY}║{Style.RESET_ALL}"
+        f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {COLOR_ERROR}0{Style.RESET_ALL}. {i18n.get('menu_exit'): <57}{COLOR_PRIMARY}│{Style.RESET_ALL}"
     )
-    print(f"{COLOR_PRIMARY}╚{'═'*62}╝{Style.RESET_ALL}")
+    print(f"{COLOR_PRIMARY}└{'─'*62}┘{Style.RESET_ALL}")
 
 
 def menu_extract():
     clear_screen()
-    print(f"\n{COLOR_PRIMARY}╔{'═'*58}╗{Style.RESET_ALL}")
+    print(f"\n{COLOR_PRIMARY}┌{'─'*58}┐{Style.RESET_ALL}")
     print(
-        f"{COLOR_PRIMARY}║{Style.RESET_ALL}  {i18n.get('extract_title'):^56}{COLOR_PRIMARY}║{Style.RESET_ALL}"
+        f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {i18n.get('extract_title'):^56}{COLOR_PRIMARY}│{Style.RESET_ALL}"
     )
-    print(f"{COLOR_PRIMARY}╚{'═'*58}╝{Style.RESET_ALL}")
+    print(f"{COLOR_PRIMARY}└{'─'*58}┘{Style.RESET_ALL}")
     libunity = select_file(
         i18n.get("select_libunity"), [("SO files", ".so"), ("All files", ".*")]
     )
@@ -1005,11 +1005,11 @@ def menu_extract():
 
 def menu_decrypt():
     clear_screen()
-    print(f"\n{COLOR_PRIMARY}╔{'═'*58}╗{Style.RESET_ALL}")
+    print(f"\n{COLOR_PRIMARY}┌{'─'*58}┐{Style.RESET_ALL}")
     print(
-        f"{COLOR_PRIMARY}║{Style.RESET_ALL}  {i18n.get('decrypt_title'):^56}{COLOR_PRIMARY}║{Style.RESET_ALL}"
+        f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {i18n.get('decrypt_title'):^56}{COLOR_PRIMARY}│{Style.RESET_ALL}"
     )
-    print(f"{COLOR_PRIMARY}╚{'═'*58}╝{Style.RESET_ALL}")
+    print(f"{COLOR_PRIMARY}└{'─'*58}┘{Style.RESET_ALL}")
     input_file = select_file(
         i18n.get("select_encrypted"), [("DAT files", ".dat"), ("All files", ".*")]
     )
@@ -1035,11 +1035,11 @@ def menu_decrypt():
 
 def menu_info():
     clear_screen()
-    print(f"\n{COLOR_PRIMARY}╔{'═'*58}╗{Style.RESET_ALL}")
+    print(f"\n{COLOR_PRIMARY}┌{'─'*58}┐{Style.RESET_ALL}")
     print(
-        f"{COLOR_PRIMARY}║{Style.RESET_ALL}  {i18n.get('info_title'):^56}{COLOR_PRIMARY}║{Style.RESET_ALL}"
+        f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {i18n.get('info_title'):^56}{COLOR_PRIMARY}│{Style.RESET_ALL}"
     )
-    print(f"{COLOR_PRIMARY}╚{'═'*58}╝{Style.RESET_ALL}")
+    print(f"{COLOR_PRIMARY}└{'─'*58}┘{Style.RESET_ALL}")
     input_file = select_file(
         i18n.get("select_metadata"), [("DAT files", ".dat"), ("All files", ".*")]
     )
@@ -1050,11 +1050,11 @@ def menu_info():
     try:
         with open(input_file, "rb") as f:
             data = f.read(512)
-        print(f"\n{COLOR_PRIMARY}╔{'═'*58}╗{Style.RESET_ALL}")
+        print(f"\n{COLOR_PRIMARY}┌{'─'*58}┐{Style.RESET_ALL}")
         print(
-            f"{COLOR_PRIMARY}║{Style.RESET_ALL}  {i18n.get('metadata_info_title'):^56}{COLOR_PRIMARY}║{Style.RESET_ALL}"
+            f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {i18n.get('metadata_info_title'):^56}{COLOR_PRIMARY}│{Style.RESET_ALL}"
         )
-        print(f"{COLOR_PRIMARY}╚{'═'*58}╝{Style.RESET_ALL}")
+        print(f"{COLOR_PRIMARY}└{'─'*58}┘{Style.RESET_ALL}")
         print(f"{i18n.get('magic')}{data[:4].hex().upper()}")
         version, desc = get_metadata_version(data)
         print(f"{i18n.get('version')}{version} ({desc})")
@@ -1174,11 +1174,11 @@ def main():
                 sys.exit(1)
             with open(args.input, "rb") as f:
                 data = f.read(512)
-            print(f"\n{COLOR_PRIMARY}╔{'═'*58}╗{Style.RESET_ALL}")
+            print(f"\n{COLOR_PRIMARY}┌{'─'*58}┐{Style.RESET_ALL}")
             print(
-                f"{COLOR_PRIMARY}║{Style.RESET_ALL}  {'Metadata Info':^56}{COLOR_PRIMARY}║{Style.RESET_ALL}"
+                f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {'Metadata Info':^56}{COLOR_PRIMARY}│{Style.RESET_ALL}"
             )
-            print(f"{COLOR_PRIMARY}╚{'═'*58}╝{Style.RESET_ALL}")
+            print(f"{COLOR_PRIMARY}└{'─'*58}┘{Style.RESET_ALL}")
             print(f"Magic: {data[:4].hex().upper()}")
             version, desc = get_metadata_version(data)
             print(f"Version: {version} ({desc})")
