@@ -3,6 +3,7 @@
 **[english](#english)** | **[русский](#russian)**
 
 <a id="english"></a>
+
 ## english
 
 a python tool for working with Unity IL2CPP global-metadata.dat files.
@@ -24,6 +25,7 @@ python main.py
 ```
 
 <a id="russian"></a>
+
 ## русский
 
 пайтон тула для работы с файлами global-metadata.dat из Unity IL2CPP.
