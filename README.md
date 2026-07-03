@@ -15,7 +15,7 @@ thanks to [Michel-M](https://github.com/Michel-M-code) for his [Metadata-Decrypt
 ### run
 
 ```
-pip install -r requirements.txt
+git clone https://github.com/FANATFANATA/Metadata-Worker
 ```
 
 and:
@@ -37,7 +37,7 @@ python main.py
 ### запуск
 
 ```
-pip install -r requirements.txt
+git clone https://github.com/FANATFANATA/Metadata-Worker
 ```
 
 потом:
