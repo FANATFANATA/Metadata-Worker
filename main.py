@@ -4,8 +4,8 @@ import json
 import logging
 import os
 import struct
+import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
 
@@ -16,16 +16,7 @@ try:
     TKINTER_AVAILABLE = True
 except ImportError:
     TKINTER_AVAILABLE = False
-from colorama import Fore, Style
-from colorama import init as colorama_init
-from tqdm import tqdm
 
-try:
-    from elftools.elf.elffile import ELFFile
-
-    ELFTOOLS_AVAILABLE = True
-except ImportError:
-    ELFTOOLS_AVAILABLE = False
 if getattr(sys, "frozen", False):
     script_dir = os.path.dirname(sys.executable)
 else:
@@ -72,7 +63,6 @@ SUPPORTED_VERSIONS = {
     42: "Unity 2023.1",
     43: "Unity 2023.2",
 }
-colorama_init(autoreset=True)
 DEFAULT_CONFIG = {
     "language": "en",
     "recent_files": [],
@@ -86,6 +76,37 @@ COLOR_SUCCESS = "\033[38;2;188;39;50m"
 COLOR_WARNING = "\033[38;2;188;39;50m"
 COLOR_ERROR = "\033[38;2;188;39;50m"
 COLOR_ACCENT = "\033[38;2;188;39;50m"
+
+
+def ensure_dependency(package_name, import_name=None):
+    if import_name is None:
+        import_name = package_name
+    try:
+        __import__(import_name)
+        return True
+    except ImportError:
+        print(i18n.get("dep_missing").format(package=package_name))
+        while True:
+            try:
+                ans = input(i18n.get("dep_install_prompt")).strip().lower()
+            except EOFError:
+                ans = "n"
+            if ans in ("y", "n"):
+                break
+        if ans == "y":
+            print(i18n.get("dep_installing").format(package=package_name))
+            try:
+                subprocess.check_call(
+                    [sys.executable, "-m", "pip", "install", package_name]
+                )
+                __import__(import_name)
+                return True
+            except Exception as e:
+                print(i18n.get("dep_failed").format(package=package_name, error=e))
+                sys.exit(1)
+        else:
+            print(i18n.get("dep_cancelled"))
+            sys.exit(1)
 
 
 def setup_logging():
@@ -286,11 +307,7 @@ def select_folder(title: str) -> str:
 
 
 def loading_animation():
-    frames = ["|", "/", "-", "\\"]
-    for frame in frames:
-        print(f"Running...{frame}", end="\r")
-        time.sleep(0.1)
-    print(" " * 20, end="\r")
+    pass
 
 
 def is_valid_metadata(data: bytes) -> bool:
@@ -709,9 +726,7 @@ def apply_heuristic(
         for i in range(0, len(data), step):
             try:
                 fields = struct.unpack_from(struct_sig, data, i)
-                entries.append(
-                    fields[0] if len(struct_sig.rstrip("x")) <= 1 else fields
-                )
+                entries.append(fields[0] if len(struct_sig) <= 1 else fields)
             except struct.error:
                 break
         if callback and callback(entries):
@@ -766,14 +781,16 @@ def decrypt_metadata(
             f"{COLOR_PRIMARY}Found {len(offset_candidates)} offset candidates{Style.RESET_ALL}"
         )
         if exclude_offsets:
-            for excluded in exclude_offsets.split(","):
+            for excluded in exclude_offsets.replace(" ", "").split(","):
+                if not excluded:
+                    continue
                 try:
                     todelete = int(excluded)
                     offset_candidates.remove(todelete)
                     print(f"{COLOR_PRIMARY}Excluded offset {todelete}{Style.RESET_ALL}")
                 except (ValueError, KeyError):
                     print(
-                        f"{COLOR_WARNING}Offset {todelete} not found in candidates{Style.RESET_ALL}"
+                        f"{COLOR_WARNING}Offset {excluded} not found in candidates{Style.RESET_ALL}"
                     )
         offsets_to_sizes: List[Tuple[int, int]] = []
         only_sizes = [
@@ -1024,8 +1041,8 @@ def menu_decrypt():
         print(f"{COLOR_ERROR}{i18n.get('no_output_path')}{Style.RESET_ALL}")
         return
     try:
-        exclude = input("Exclude offsets (e.g., 1,2,3 or empty): ").strip() or None
-        skip = input("Skip auto-decryption? (y/N): ").strip().lower() == "y"
+        exclude = input(i18n.get("exclude_offsets_prompt")).strip() or None
+        skip = input(i18n.get("skip_decrypt_prompt")).strip().lower() == "y"
         with open(input_file, "rb") as f:
             metadata = f.read()
         decrypt_metadata(metadata, output, exclude, skip_decrypt=skip)
@@ -1113,6 +1130,14 @@ def interactive_menu():
 
 
 def main():
+    ensure_dependency("colorama")
+    ensure_dependency("tqdm")
+    ensure_dependency("pyelftools", "elftools")
+    global Style
+    from colorama import Fore, Style
+    from colorama import init as colorama_init
+
+    colorama_init(autoreset=True)
     setup_logging()
     load_config()
     log_info(f"Application started, version {VERSION}")
@@ -1176,20 +1201,22 @@ def main():
                 data = f.read(512)
             print(f"\n{COLOR_PRIMARY}┌{'─'*58}┐{Style.RESET_ALL}")
             print(
-                f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {'Metadata Info':^56}{COLOR_PRIMARY}│{Style.RESET_ALL}"
+                f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {i18n.get('metadata_info_title'):^56}{COLOR_PRIMARY}│{Style.RESET_ALL}"
             )
             print(f"{COLOR_PRIMARY}└{'─'*58}┘{Style.RESET_ALL}")
-            print(f"Magic: {data[:4].hex().upper()}")
+            print(f"{i18n.get('magic')}{data[:4].hex().upper()}")
             version, desc = get_metadata_version(data)
-            print(f"Version: {version} ({desc})")
-            print(f"File size: {os.path.getsize(args.input)} bytes")
+            print(f"{i18n.get('version')}{version} ({desc})")
+            print(f"{i18n.get('file_size')}{os.path.getsize(args.input)} bytes")
             if data[:4] != METADATA_MAGIC:
                 print(
-                    f"{COLOR_WARNING}Warning: Invalid magic bytes - file may be encrypted{Style.RESET_ALL}"
+                    f"{COLOR_WARNING}{i18n.get('warning_invalid_magic')}{Style.RESET_ALL}"
                 )
             decrypted, key = try_decrypt_metadata(data)
             if key:
-                print(f"{COLOR_SUCCESS}Possible encryption key: {key}{Style.RESET_ALL}")
+                print(
+                    f"{COLOR_SUCCESS}{i18n.get('possible_encryption')}{key}{Style.RESET_ALL}"
+                )
         elif args.command == "menu":
             interactive_menu()
     else:

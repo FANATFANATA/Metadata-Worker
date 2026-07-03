@@ -71,6 +71,13 @@ LANGUAGES = {
         "starting_decrypt": "Starting metadata decryption... ",
         "not_encrypted": "Metadata is not encrypted or uses unknown encryption ",
         "lang_changed": "Language changed to ",
+        "dep_missing": "Required package '{package}' is not installed.",
+        "dep_install_prompt": "Install it now? (y/n): ",
+        "dep_installing": "Installing {package}...",
+        "dep_failed": "Failed to install {package}: {error}",
+        "dep_cancelled": "Installation cancelled. Exiting.",
+        "exclude_offsets_prompt": "Exclude offsets (e.g., 1,2,3 or empty): ",
+        "skip_decrypt_prompt": "Skip auto-decryption? (y/N): ",
     },
     "ru": {
         "path_to_file": "Путь к файлу (или 'q' для отмены): ",
@@ -132,6 +139,13 @@ LANGUAGES = {
         "starting_decrypt": "Начало расшифровки метаданных... ",
         "not_encrypted": "Метаданные не зашифрованы или используется неизвестное шифрование ",
         "lang_changed": "Язык изменён на ",
+        "dep_missing": "Необходимый пакет '{package}' не установлен.",
+        "dep_install_prompt": "Установить сейчас? (y/n): ",
+        "dep_installing": "Установка {package}...",
+        "dep_failed": "Не удалось установить {package}: {error}",
+        "dep_cancelled": "Установка отменена. Выход.",
+        "exclude_offsets_prompt": "Исключить смещения (например, 1,2,3 или пусто): ",
+        "skip_decrypt_prompt": "Пропустить авто-расшифровку? (y/N): ",
     },
 }
 current_language = "en"

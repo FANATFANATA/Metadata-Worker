@@ -2,3 +2,4 @@
 /metadata_decryptor.py
 /metadata-worker.log
 /__pycache__
+/config.json
