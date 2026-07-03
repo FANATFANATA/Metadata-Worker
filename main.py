@@ -212,7 +212,11 @@ def select_file_cli(title: str) -> str:
         print(title)
     recent = config.get("recent_files", [])
     if recent:
-        print(f"{COLOR_PRIMARY}Recent files:{Style.RESET_ALL}" if Style else "Recent files:")
+        print(
+            f"{COLOR_PRIMARY}Recent files:{Style.RESET_ALL}"
+            if Style
+            else "Recent files:"
+        )
         for i, path in enumerate(recent[:5], 1):
             print(f"  [{i}] {path}")
     while True:
@@ -227,7 +231,11 @@ def select_file_cli(title: str) -> str:
         if os.path.isfile(path):
             add_recent_file(path)
             return path
-        print(f"{COLOR_ERROR}{i18n.get('file_not_found')}{Style.RESET_ALL}" if Style else i18n.get('file_not_found'))
+        print(
+            f"{COLOR_ERROR}{i18n.get('file_not_found')}{Style.RESET_ALL}"
+            if Style
+            else i18n.get("file_not_found")
+        )
 
 
 def select_save_file_cli(title: str, defaultextension: str = "") -> str:
@@ -246,7 +254,11 @@ def select_save_file_cli(title: str, defaultextension: str = "") -> str:
             if defaultextension and not path.endswith(defaultextension):
                 path += defaultextension
             return path
-        print(f"{COLOR_ERROR}{i18n.get('enter_path')}{Style.RESET_ALL}" if Style else i18n.get('enter_path'))
+        print(
+            f"{COLOR_ERROR}{i18n.get('enter_path')}{Style.RESET_ALL}"
+            if Style
+            else i18n.get("enter_path")
+        )
 
 
 def select_folder_cli(title: str) -> str:
@@ -263,7 +275,11 @@ def select_folder_cli(title: str) -> str:
             return ""
         if os.path.isdir(path):
             return path
-        print(f"{COLOR_ERROR}{i18n.get('folder_not_found')}{Style.RESET_ALL}" if Style else i18n.get('folder_not_found'))
+        print(
+            f"{COLOR_ERROR}{i18n.get('folder_not_found')}{Style.RESET_ALL}"
+            if Style
+            else i18n.get("folder_not_found")
+        )
 
 
 def select_file(title: str, filetypes: list) -> str:
@@ -741,9 +757,7 @@ def apply_heuristic(
         for i in range(0, len(data), step):
             try:
                 fields = struct.unpack_from(struct_sig, data, i)
-                entries.append(
-                    fields[0] if len(struct_sig) <= 1 else fields
-                )
+                entries.append(fields[0] if len(struct_sig) <= 1 else fields)
             except struct.error:
                 break
         if callback and callback(entries):
@@ -796,9 +810,13 @@ def unshuffle_metadata_header(header: bytes, full_size: int) -> Optional[List[in
                 prev_offset = ints[j]
                 prev_size = ints[i]
                 if len(pairs) in (25, 28, 29, 30):
-                    prev_offset, prev_size = min(prev_offset, prev_size), max(prev_offset, prev_size)
+                    prev_offset, prev_size = min(prev_offset, prev_size), max(
+                        prev_offset, prev_size
+                    )
                 else:
-                    prev_offset, prev_size = max(prev_offset, prev_size), min(prev_offset, prev_size)
+                    prev_offset, prev_size = max(prev_offset, prev_size), min(
+                        prev_offset, prev_size
+                    )
                 delta = current_offset - prev_offset
                 if abs(prev_size - delta) <= 4:
                     pairs.append((prev_offset, prev_size))
@@ -882,9 +900,14 @@ def decrypt_metadata(
         offsets_to_sizes: List[Tuple[int, int]] = []
         for possible_offset in offset_candidates:
             found = False
-            size_search_pool = only_sizes if possible_offset != 256 else [
-                struct.unpack("<I", metadata[i : i + 4])[0] for i in range(0, 256, 4)
-            ]
+            size_search_pool = (
+                only_sizes
+                if possible_offset != 256
+                else [
+                    struct.unpack("<I", metadata[i : i + 4])[0]
+                    for i in range(0, 256, 4)
+                ]
+            )
             for size in size_search_pool:
                 if size != possible_offset and size != 0 and size < len(metadata) / 3:
                     if size + possible_offset == len(metadata):
@@ -892,7 +915,10 @@ def decrypt_metadata(
                         found = True
                         break
                     for next_offset in offset_candidates:
-                        if possible_offset + size == next_offset and possible_offset != next_offset:
+                        if (
+                            possible_offset + size == next_offset
+                            and possible_offset != next_offset
+                        ):
                             offsets_to_sizes.append((possible_offset, size))
                             found = True
                             break
@@ -908,15 +934,25 @@ def decrypt_metadata(
                         next_offset = offset_candidates[idx + 1]
                 except ValueError:
                     pass
-                is_size_big_enough = (next_offset is not None) and (next_offset - possible_offset > 4096)
+                is_size_big_enough = (next_offset is not None) and (
+                    next_offset - possible_offset > 4096
+                )
                 did_last_add_up = False
                 if offsets_to_sizes:
                     last_pair_sum = sum(offsets_to_sizes[-1])
                     did_last_add_up = last_pair_sum == possible_offset
-                if (is_256 or is_big_enough or is_size_big_enough) and (did_last_add_up or is_256 or not offsets_to_sizes):
-                    size = (next_offset - possible_offset) if next_offset else len(metadata) - possible_offset
+                if (is_256 or is_big_enough or is_size_big_enough) and (
+                    did_last_add_up or is_256 or not offsets_to_sizes
+                ):
+                    size = (
+                        (next_offset - possible_offset)
+                        if next_offset
+                        else len(metadata) - possible_offset
+                    )
                     offsets_to_sizes.append((possible_offset, size))
-                    print(f"{COLOR_PRIMARY}Offset {possible_offset} added with approximate size {size}{Style.RESET_ALL}")
+                    print(
+                        f"{COLOR_PRIMARY}Offset {possible_offset} added with approximate size {size}{Style.RESET_ALL}"
+                    )
                 else:
                     only_sizes.append(possible_offset)
 
@@ -999,7 +1035,7 @@ def decrypt_metadata(
             return True
 
         def images_cb(e):
-            entries = e[:len(e) - 2]
+            entries = e[: len(e) - 2]
             for entry in entries:
                 if entry[7] != 1:
                     return False
@@ -1092,15 +1128,33 @@ def decrypt_metadata(
             ("interfaces", interfaces_cb, "<I", False, None),
             ("vtableMethods", vtableMethods_cb, "<I", False, None),
             ("interfaceOffsets", interfaceOffsets_cb, "<II", False, None),
-            ("typeDefinitions", typeDefinitions_cb, "<IIIIIIIIIIIIIIIIHHHHHHHHII", False, None),
+            (
+                "typeDefinitions",
+                typeDefinitions_cb,
+                "<IIIIIIIIIIIIIIIIHHHHHHHHII",
+                False,
+                None,
+            ),
             ("images", images_cb, "<IIIIIIIIII", False, None),
             ("assemblies", token_cb(0x20000000), "<IIIIIIIIIIIIIIII", False, None),
             ("fieldRefs", fieldRefs_cb, "<II", False, None),
             ("referencedAssemblies", referencedAssemblies_cb, "<I", False, None),
             ("attributeData", None, None, False, b"NewFragmentBox"),
             ("attributeDataRange", attributeDataRange_cb, "<II", False, None),
-            ("unresolvedIndirectCallParameterTypes", unresolvedIndirectCallParameterTypes_cb, "<I", False, None),
-            ("unresolvedIndirectCallParameterTypeRanges", unresolvedIndirectCallParameterTypeRanges_cb, "<II", False, None),
+            (
+                "unresolvedIndirectCallParameterTypes",
+                unresolvedIndirectCallParameterTypes_cb,
+                "<I",
+                False,
+                None,
+            ),
+            (
+                "unresolvedIndirectCallParameterTypeRanges",
+                unresolvedIndirectCallParameterTypeRanges_cb,
+                "<II",
+                False,
+                None,
+            ),
             ("exportedTypeDefinitions", exportedTypeDefinitions_cb, "<I", False, None),
         ]
         for h_name, h_cb, h_sig, h_pref, h_marker in tqdm(
@@ -1113,7 +1167,9 @@ def decrypt_metadata(
                 reconstructed_offsets.append(result[0])
 
         if len(reconstructed_offsets) < 28:
-            print(f"{COLOR_WARNING}Heuristics only found {len(reconstructed_offsets)} sections, trying unshuffle...{Style.RESET_ALL}")
+            print(
+                f"{COLOR_WARNING}Heuristics only found {len(reconstructed_offsets)} sections, trying unshuffle...{Style.RESET_ALL}"
+            )
             unshuffled = unshuffle_metadata_header(metadata[:256], len(metadata))
             if unshuffled:
                 reconstructed_offsets = unshuffled
@@ -1356,7 +1412,8 @@ def main():
     ensure_dependency("colorama")
     ensure_dependency("tqdm")
     ensure_dependency("pyelftools", "elftools")
-    from colorama import Fore as _Fore, Style as _Style
+    from colorama import Fore as _Fore
+    from colorama import Style as _Style
     from colorama import init as colorama_init
     from tqdm import tqdm as _tqdm
 
@@ -1368,6 +1425,7 @@ def main():
     globals()["tqdm"] = tqdm
     try:
         from elftools.elf.elffile import ELFFile
+
         globals()["ELFFile"] = ELFFile
         ELFTOOLS_AVAILABLE = True
     except ImportError:
@@ -1450,7 +1508,9 @@ def main():
                 )
             decrypted, key = try_decrypt_metadata(data)
             if key:
-                print(f"{COLOR_SUCCESS}{i18n.get('possible_encryption')}{key}{Style.RESET_ALL}")
+                print(
+                    f"{COLOR_SUCCESS}{i18n.get('possible_encryption')}{key}{Style.RESET_ALL}"
+                )
         elif args.command == "menu":
             interactive_menu()
     else:
