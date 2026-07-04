@@ -78,6 +78,11 @@ LANGUAGES = {
         "dep_cancelled": "Installation cancelled. Exiting.",
         "exclude_offsets_prompt": "Exclude offsets (e.g., 1,2,3 or empty): ",
         "skip_decrypt_prompt": "Skip auto-decryption? (y/N): ",
+        "approx_offset_added": "Offset added with approximate size",
+        "heuristics_insufficient": "Heuristics only found",
+        "trying_unshuffle": "sections, trying unshuffle...",
+        "unshuffle_success": "Unshuffle succeeded.",
+        "unshuffle_failed": "Unshuffle also failed.",
     },
     "ru": {
         "path_to_file": "Путь к файлу (или 'q' для отмены): ",
@@ -146,6 +151,11 @@ LANGUAGES = {
         "dep_cancelled": "Установка отменена. Выход.",
         "exclude_offsets_prompt": "Исключить смещения (например, 1,2,3 или пусто): ",
         "skip_decrypt_prompt": "Пропустить авто-расшифровку? (y/N): ",
+        "approx_offset_added": "Добавлено смещение с примерным размером",
+        "heuristics_insufficient": "Эвристики нашли только",
+        "trying_unshuffle": "секций, пробуем unshuffle...",
+        "unshuffle_success": "Unshuffle успешен.",
+        "unshuffle_failed": "Unshuffle также не удался.",
     },
 }
 current_language = "en"
