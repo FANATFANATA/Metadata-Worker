@@ -558,7 +558,10 @@ def extract_metadata_pointer(libunity_path: str) -> Optional[int]:
                     ):
                         continue
                     if is64bit:
-                        pointer = relocation.get("r_addend", 0)
+                        try:
+                            pointer = relocation["r_addend"]
+                        except KeyError:
+                            continue
                         if pointer != 0:
                             relocations.append(pointer)
                     else:
@@ -1366,7 +1369,8 @@ def main():
     ensure_dependency("colorama")
     ensure_dependency("tqdm")
     ensure_dependency("pyelftools", "elftools")
-    from colorama import Fore as _Fore, Style as _Style
+    from colorama import Fore as _Fore
+    from colorama import Style as _Style
     from colorama import init as colorama_init
     from tqdm import tqdm as _tqdm
 
