@@ -1,11 +1,14 @@
 import argparse
-import collections
+from collections import Counter
+import itertools
+import sys
+import threading
+import time
 import json
 import logging
 import os
 import struct
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
 
@@ -77,10 +80,10 @@ Fore = None
 tqdm = None
 
 COLOR_PRIMARY = "\033[38;2;188;39;50m"
-COLOR_SUCCESS = "\033[38;2;188;39;50m"
-COLOR_WARNING = "\033[38;2;188;39;50m"
-COLOR_ERROR = "\033[38;2;188;39;50m"
-COLOR_ACCENT = "\033[38;2;188;39;50m"
+COLOR_SUCCESS = "\033[38;2;0;200;0m"
+COLOR_WARNING = "\033[38;2;255;165;0m"
+COLOR_ERROR = "\033[38;2;255;50;50m"
+COLOR_ACCENT = "\033[38;2;0;150;255m"
 
 
 def ensure_dependency(package_name, import_name=None):
@@ -336,8 +339,25 @@ def select_folder(title: str) -> str:
     return select_folder_cli(title)
 
 
+_spinner_stop = threading.Event()
+
+
 def loading_animation():
-    pass
+    _spinner_stop.clear()
+    def _spin():
+        for c in itertools.cycle('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'):
+            if _spinner_stop.is_set():
+                break
+            sys.stdout.write(f'\r{COLOR_PRIMARY}{c}{Style.RESET_ALL}')
+            sys.stdout.flush()
+            time.sleep(0.08)
+        sys.stdout.write('\r' + ' ' * 10 + '\r')
+    t = threading.Thread(target=_spin, daemon=True)
+    t.start()
+
+
+def stop_loading():
+    _spinner_stop.set()
 
 
 def is_valid_metadata(data: bytes) -> bool:
@@ -727,8 +747,8 @@ def find_offset_candidates(metadata: bytes) -> List[int]:
         ahead = metadata[field : field + 4096]
         zeroes_behind = behind.count(b"\0")
         zeroes_ahead = ahead.count(b"\0")
-        counter_behind = collections.Counter(behind)
-        counter_ahead = collections.Counter(ahead)
+        counter_behind = Counter(behind)
+        counter_ahead = Counter(ahead)
         keys = set(counter_behind.keys()) | set(counter_ahead.keys())
         freq_behind = {k: counter_behind.get(k, 0) / 4096 for k in keys}
         freq_ahead = {k: counter_ahead.get(k, 0) / 4096 for k in keys}
@@ -1114,7 +1134,7 @@ def decrypt_metadata(
                 expected_constraints_start += constraints_count
             return True
 
-        def genericParameterContraints_cb(e):
+        def genericParameterConstraints_cb(e):
             for constraint in e:
                 if 1024576 < constraint or constraint < 256:
                     return False
@@ -1153,8 +1173,8 @@ def decrypt_metadata(
             ("fields", token_cb_at(2, 0x04000000), "<III", True, None),
             ("genericParameters", genericParameters_cb, "<IIHHHH", True, None),
             (
-                "genericParameterContraints",
-                genericParameterContraints_cb,
+                "genericParameterConstraints",
+                genericParameterConstraints_cb,
                 "<I",
                 True,
                 None,
@@ -1407,6 +1427,7 @@ def interactive_menu():
     else:
         print(i18n.BANNER)
     loading_animation()
+    stop_loading()
     while True:
         print_menu()
         try:
@@ -1459,9 +1480,6 @@ def main():
     Style = _Style
     Fore = _Fore
     tqdm = _tqdm
-    globals()["Style"] = Style
-    globals()["Fore"] = Fore
-    globals()["tqdm"] = tqdm
     try:
         from elftools.elf.elffile import ELFFile
 
@@ -1550,8 +1568,7 @@ def main():
                 print(
                     f"{COLOR_SUCCESS}{i18n.get('possible_encryption')}{key}{Style.RESET_ALL}"
                 )
-        elif args.command == "menu":
-            interactive_menu()
+        stop_loading()
     else:
         interactive_menu()
 
