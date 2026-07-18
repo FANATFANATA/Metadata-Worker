@@ -1,5 +1,4 @@
-/.gig*
-/metadata_decryptor.py
+/.giga*
 /metadata-worker.log
 /__pycache__
 /config.json
