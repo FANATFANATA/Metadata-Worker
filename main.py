@@ -9,7 +9,6 @@ import logging
 import os
 import struct
 import subprocess
-from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
 
 try:
@@ -76,7 +75,6 @@ logger = None
 ELFTOOLS_AVAILABLE = False
 
 Style = None
-Fore = None
 tqdm = None
 
 COLOR_PRIMARY = "\033[38;2;188;39;50m"
@@ -183,26 +181,6 @@ def add_recent_file(path: str):
     save_config()
 
 
-def validate_path(path: str, must_exist: bool = True) -> Optional[str]:
-    try:
-        if not path or not path.strip():
-            return None
-        p = Path(path).resolve()
-        if must_exist and not p.exists():
-            log_error(f"Path does not exist: {path}")
-            return None
-        if not must_exist:
-            parent = p.parent
-            if not parent.exists():
-                log_error(f"Parent directory does not exist: {parent}")
-                return None
-        log_debug(f"Validated path: {p}")
-        return str(p)
-    except (ValueError, OSError) as e:
-        log_error(f"Path validation error: {e}")
-        return None
-
-
 def clear_screen():
     os.system("cls" if os.name == "nt" else "clear")
 
@@ -263,27 +241,6 @@ def select_save_file_cli(title: str, defaultextension: str = "") -> str:
         )
 
 
-def select_folder_cli(title: str) -> str:
-    if Style:
-        print(f"{COLOR_PRIMARY}{title}{Style.RESET_ALL}")
-    else:
-        print(title)
-    while True:
-        try:
-            path = input(i18n.get("path_to_folder")).strip()
-        except (EOFError, KeyboardInterrupt):
-            return ""
-        if path.lower() == "q":
-            return ""
-        if os.path.isdir(path):
-            return path
-        print(
-            f"{COLOR_ERROR}{i18n.get('folder_not_found')}{Style.RESET_ALL}"
-            if Style
-            else i18n.get("folder_not_found")
-        )
-
-
 def select_file(title: str, filetypes: list) -> str:
     if TKINTER_AVAILABLE:
         root = None
@@ -320,23 +277,6 @@ def select_save_file(title: str, filetypes: list, defaultextension: str = "") ->
             if root:
                 root.destroy()
     return select_save_file_cli(title, defaultextension)
-
-
-def select_folder(title: str) -> str:
-    if TKINTER_AVAILABLE:
-        root = None
-        try:
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            folder_path = filedialog.askdirectory(title=title)
-            return folder_path
-        except tk.TclError:
-            pass
-        finally:
-            if root:
-                root.destroy()
-    return select_folder_cli(title)
 
 
 _spinner_stop = threading.Event()
@@ -677,6 +617,26 @@ def extract_metadata_pointer_alternative(libunity_path: str) -> Optional[int]:
     return None
 
 
+def truncate_at_end_marker(metadata: bytes) -> Tuple[bytes, bool]:
+    is64bit = True
+    index = metadata.find(METADATA_MARKER_64)
+    if index == -1:
+        index = metadata.find(METADATA_MARKER_32)
+        is64bit = False
+    if index != -1:
+        index += (4 - index % 4) % 4
+        if index > 0 and index <= len(metadata):
+            metadata = metadata[:index]
+        print(
+            f"{COLOR_SUCCESS}Metadata end marker found ({'64-bit' if is64bit else '32-bit'}).{Style.RESET_ALL}"
+        )
+    else:
+        print(
+            f"{COLOR_ERROR}Warning: End marker not found, using full dump.{Style.RESET_ALL}"
+        )
+    return metadata, is64bit
+
+
 def extract_metadata(
     libunity_path: str, size: int = 30_000_000
 ) -> Optional[Tuple[bytes, bool]]:
@@ -694,22 +654,7 @@ def extract_metadata(
             print(
                 f"{COLOR_PRIMARY}Metadata version: {version} ({desc}){Style.RESET_ALL}"
             )
-            is64bit = True
-            index = metadata.find(METADATA_MARKER_64)
-            if index == -1:
-                index = metadata.find(METADATA_MARKER_32)
-                is64bit = False
-            if index != -1:
-                index += (4 - index % 4) % 4
-                if index > 0 and index <= len(metadata):
-                    metadata = metadata[:index]
-                print(
-                    f"{COLOR_SUCCESS}Metadata end marker found ({'64-bit' if is64bit else '32-bit'}).{Style.RESET_ALL}"
-                )
-            else:
-                print(
-                    f"{COLOR_ERROR}Warning: End marker not found, using full dump.{Style.RESET_ALL}"
-                )
+            metadata, is64bit = truncate_at_end_marker(metadata)
             print(
                 f"{COLOR_PRIMARY}Metadata size: {len(metadata)} bytes{Style.RESET_ALL}"
             )
@@ -723,22 +668,7 @@ def extract_metadata(
             metadata, key = try_decrypt_metadata(metadata)
             if key:
                 print(f"{COLOR_SUCCESS}Auto-decrypted: {key}{Style.RESET_ALL}")
-            is64bit = True
-            index = metadata.find(METADATA_MARKER_64)
-            if index == -1:
-                index = metadata.find(METADATA_MARKER_32)
-                is64bit = False
-            if index != -1:
-                index += (4 - index % 4) % 4
-                if index > 0 and index <= len(metadata):
-                    metadata = metadata[:index]
-                print(
-                    f"{COLOR_SUCCESS}Metadata end marker found ({'64-bit' if is64bit else '32-bit'}).{Style.RESET_ALL}"
-                )
-            else:
-                print(
-                    f"{COLOR_ERROR}Warning: End marker not found, using full dump.{Style.RESET_ALL}"
-                )
+            metadata, is64bit = truncate_at_end_marker(metadata)
             version, desc = get_metadata_version(metadata)
             print(
                 f"{COLOR_PRIMARY}Metadata version: {version} ({desc}){Style.RESET_ALL}"
@@ -809,7 +739,7 @@ def apply_heuristic(
         for i in range(0, len(data), step):
             try:
                 fields = struct.unpack_from(struct_sig, data, i)
-                entries.append(fields[0] if len(struct_sig) <= 1 else fields)
+                entries.append(fields[0] if len(struct_sig) == 2 else fields)
             except struct.error:
                 break
         if callback and callback(entries):
@@ -1023,7 +953,7 @@ def decrypt_metadata(
             f"{COLOR_PRIMARY}{i18n.get('validated_pairs')}{len(offsets_to_sizes)}{i18n.get('offset_size_pairs')}{Style.RESET_ALL}"
         )
         reconstructed = bytearray(
-            METADATA_HEADER_MAGIC + b"\x1f\x00\x00\x00\x00\x01\x00\x00" + b"\x00" * 248
+            METADATA_HEADER_MAGIC + b"\x1f\x00\x00\x00\x00\x01\x00\x00" + b"\x00" * 244
         )
         reconstructed_offsets = []
 
@@ -1295,9 +1225,8 @@ def decrypt_metadata(
                 pos += 8
 
         offset_lookup = sorted(reconstructed_offsets)
-        num_data_sections = min(29, len(reconstructed_offsets))
-        for i in range(num_data_sections):
-            offset = reconstructed_offsets[i]
+        first_sections = reconstructed_offsets[:28]
+        for offset in first_sections:
             try:
                 idx = offset_lookup.index(offset)
                 size = (
@@ -1310,8 +1239,17 @@ def decrypt_metadata(
             add_header_size(size)
             reconstructed += metadata[offset : offset + size]
 
-        for _ in range(31 - num_data_sections):
+        for _ in range(28 - len(first_sections)):
             add_header_size(0)
+
+        add_header_size(0)
+        add_header_size(0)
+
+        if len(reconstructed_offsets) > 28:
+            last_offset = reconstructed_offsets[28]
+            last_size = len(metadata) - last_offset
+            reconstructed[252:256] = struct.pack("<I", last_size)
+            reconstructed += metadata[last_offset : last_offset + last_size]
 
         if os.path.isdir(output_path):
             output_path = os.path.join(output_path, "output-metadata.dat")
@@ -1407,7 +1345,13 @@ def menu_decrypt():
         return
     try:
         exclude = input(i18n.get("exclude_offsets_prompt")).strip() or None
+    except (EOFError, KeyboardInterrupt):
+        exclude = None
+    try:
         skip = input(i18n.get("skip_decrypt_prompt")).strip().lower() == "y"
+    except (EOFError, KeyboardInterrupt):
+        skip = False
+    try:
         with open(input_file, "rb") as f:
             metadata = f.read()
         decrypt_metadata(metadata, output, exclude, skip_decrypt=skip)
@@ -1502,30 +1446,11 @@ def interactive_menu():
 
 
 def main():
-    global Style, Fore, tqdm, ELFTOOLS_AVAILABLE
-    ensure_dependency("colorama")
-    ensure_dependency("tqdm")
-    ensure_dependency("pyelftools", "elftools")
-    from colorama import Fore as _Fore
-    from colorama import Style as _Style
-    from colorama import init as colorama_init
-    from tqdm import tqdm as _tqdm
-
-    Style = _Style
-    Fore = _Fore
-    tqdm = _tqdm
-    try:
-        from elftools.elf.elffile import ELFFile
-
-        globals()["ELFFile"] = ELFFile
-        ELFTOOLS_AVAILABLE = True
-    except ImportError:
-        ELFTOOLS_AVAILABLE = False
-
-    colorama_init(autoreset=True)
-    setup_logging()
-    load_config()
-    log_info(f"Application started, version {VERSION}")
+    global Style, tqdm, ELFTOOLS_AVAILABLE
+    if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(
         prog="Metadata-Worker", description="IL2CPP Metadata Tool"
     )
@@ -1551,6 +1476,27 @@ def main():
     info_parser.add_argument("input", help="Path to metadata file")
     menu_parser = subparsers.add_parser("menu", help="Interactive menu mode")
     args = parser.parse_args()
+    ensure_dependency("colorama")
+    ensure_dependency("tqdm")
+    ensure_dependency("pyelftools", "elftools")
+    from colorama import Style as _Style
+    from colorama import init as colorama_init
+    from tqdm import tqdm as _tqdm
+
+    Style = _Style
+    tqdm = _tqdm
+    try:
+        from elftools.elf.elffile import ELFFile
+
+        globals()["ELFFile"] = ELFFile
+        ELFTOOLS_AVAILABLE = True
+    except ImportError:
+        ELFTOOLS_AVAILABLE = False
+
+    colorama_init(autoreset=True)
+    setup_logging()
+    load_config()
+    log_info(f"Application started, version {VERSION}")
     if args.command and args.command != "menu":
         print(COLOR_PRIMARY + i18n.BANNER + Style.RESET_ALL)
         loading_animation()
