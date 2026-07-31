@@ -2,3 +2,5 @@
 /metadata-worker.log
 /__pycache__
 /config.json
+/debug-metadata.bin
+/output-metadata.dat

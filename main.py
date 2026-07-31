@@ -577,7 +577,18 @@ def extract_metadata_pointer(libunity_path: str) -> Optional[int]:
             for section in elf.iter_sections():
                 if section.header["sh_type"] not in ("SHT_REL", "SHT_RELA"):
                     continue
-                total = section.header["sh_size"] // (24 if is64bit else 8)
+                if is64bit:
+                    total = section.header["sh_size"] // (
+                        24
+                        if section.header["sh_type"] == "SHT_RELA"
+                        else 16
+                    )
+                else:
+                    total = section.header["sh_size"] // (
+                        12
+                        if section.header["sh_type"] == "SHT_RELA"
+                        else 8
+                    )
                 for relocation in tqdm(
                     section.iter_relocations(),
                     colour="green",
@@ -688,6 +699,20 @@ def extract_metadata(
             if index == -1:
                 index = metadata.find(METADATA_MARKER_32)
                 is64bit = False
+            if index != -1:
+                index += (4 - index % 4) % 4
+                if index > 0 and index <= len(metadata):
+                    metadata = metadata[:index]
+                print(
+                    f"{COLOR_SUCCESS}Metadata end marker found ({'64-bit' if is64bit else '32-bit'}).{Style.RESET_ALL}"
+                )
+            else:
+                print(
+                    f"{COLOR_ERROR}Warning: End marker not found, using full dump.{Style.RESET_ALL}"
+                )
+            print(
+                f"{COLOR_PRIMARY}Metadata size: {len(metadata)} bytes{Style.RESET_ALL}"
+            )
             return metadata, is64bit
         metadata_ptr = extract_metadata_pointer(libunity_path)
         if metadata_ptr is None:
@@ -899,6 +924,12 @@ def decrypt_metadata(
             print(
                 f"{COLOR_WARNING}Warning: Version {version} may have limited support{Style.RESET_ALL}"
             )
+        if len(metadata) < 256:
+            print(
+                f"{COLOR_ERROR}{i18n.get('error')}Metadata is too small to contain a header{Style.RESET_ALL}"
+            )
+            log_error("Metadata too small for header parsing")
+            return False
         debug_path = os.path.join(script_dir, "debug-metadata.bin")
         with open(debug_path, "wb") as f:
             f.write(metadata)
@@ -1007,14 +1038,19 @@ def decrypt_metadata(
             )
 
         def events_cb(e):
-            return (
-                all(
-                    e[i][0] >= e[i - 1][0] and e[i][2] < 1024 and e[i][3] < 1024
-                    for i in range(1, len(e))
-                )
-                if e
-                else True
-            )
+            if not e:
+                return True
+            wrong = 0
+            last_name_index = e[0][0]
+            for name_index, _, add, remove, _, _ in e:
+                if name_index < last_name_index:
+                    wrong += 1
+                    if wrong > 256:
+                        return False
+                if add > 1024 or remove > 1024:
+                    return False
+                last_name_index = name_index
+            return True
 
         def ascending_cb(e):
             return all(e[i][0] <= e[i + 1][0] for i in range(len(e) - 1)) if e else True
@@ -1426,8 +1462,6 @@ def interactive_menu():
         print(COLOR_PRIMARY + i18n.BANNER + Style.RESET_ALL)
     else:
         print(i18n.BANNER)
-    loading_animation()
-    stop_loading()
     while True:
         print_menu()
         try:
@@ -1533,6 +1567,8 @@ def main():
                 print(
                     f"{COLOR_SUCCESS}Metadata extracted to {args.output}{Style.RESET_ALL}"
                 )
+            else:
+                sys.exit(1)
         elif args.command == "decrypt":
             if not os.path.isfile(args.input):
                 print(f"{COLOR_ERROR}Error: {args.input} not found{Style.RESET_ALL}")
@@ -1540,9 +1576,10 @@ def main():
                 sys.exit(1)
             with open(args.input, "rb") as f:
                 metadata = f.read()
-            decrypt_metadata(
+            if not decrypt_metadata(
                 metadata, args.output, args.exclude, skip_decrypt=args.no_decrypt
-            )
+            ):
+                sys.exit(1)
         elif args.command == "info":
             if not os.path.isfile(args.input):
                 print(f"{COLOR_ERROR}Error: {args.input} not found{Style.RESET_ALL}")
