@@ -6,7 +6,7 @@
 
 ## english
 
-a python tool for working with Unity IL2CPP global-metadata.dat files.
+a python tool for working with Unity IL2CPP global-metadata.dat.
 
 telegram - [@DanyaVoredom](https://t.me/DanyaVoredom)
 
@@ -28,7 +28,7 @@ python main.py
 
 ## русский
 
-пайтон тула для работы с файлами global-metadata.dat из Unity IL2CPP.
+пайтон тула для работы с global-metadata.dat из Unity IL2CPP.
 
 telegram: [@DanyaVoredom](https://t.me/DanyaVoredom)
 
