@@ -35,7 +35,9 @@ output_path = args.output
 print(f"{Fore.CYAN}NOTE: Current working directory: {os.getcwd()}")
 
 if confirmed and (not libunity_path or not output_path):
-    print(f"{Fore.RED + Style.BRIGHT}Error: -s requires --libunity and --output.{Style.RESET_ALL}")
+    print(
+        f"{Fore.RED + Style.BRIGHT}Error: -s requires --libunity and --output.{Style.RESET_ALL}"
+    )
     sys.exit(1)
 
 while not confirmed or (not libunity_path and not output_path):
@@ -84,7 +86,11 @@ with open(libunity_path, "rb") as libunity:
     is64bit = elf.get_machine_arch() == "AArch64"
 
     load_segments = [
-        (segment["p_vaddr"], segment["p_vaddr"] + segment["p_memsz"], segment["p_offset"])
+        (
+            segment["p_vaddr"],
+            segment["p_vaddr"] + segment["p_memsz"],
+            segment["p_offset"],
+        )
         for segment in elf.iter_segments()
         if segment["p_type"] == "PT_LOAD"
     ]
@@ -98,7 +104,9 @@ with open(libunity_path, "rb") as libunity:
 
     data_section = elf.get_section_by_name(".data")
     if data_section is None:
-        print(f"{Fore.RED + Style.BRIGHT}Error: .data section not found.{Style.RESET_ALL}")
+        print(
+            f"{Fore.RED + Style.BRIGHT}Error: .data section not found.{Style.RESET_ALL}"
+        )
         sys.exit(1)
 
     print(f"{Fore.CYAN}Collecting and mapping relocation data...")
@@ -110,20 +118,22 @@ with open(libunity_path, "rb") as libunity:
         print(f"{Fore.CYAN}Processing relocation section: {section.name}")
         if is64bit:
             total = section.header["sh_size"] // (
-                24
-                if section.header["sh_type"] == "SHT_RELA"
-                else 16
+                24 if section.header["sh_type"] == "SHT_RELA" else 16
             )
         else:
             total = section.header["sh_size"] // (
-                12
-                if section.header["sh_type"] == "SHT_RELA"
-                else 8
+                12 if section.header["sh_type"] == "SHT_RELA" else 8
             )
-        for relocation in tqdm(section.iter_relocations(), colour="green", unit="relocations", total=total):
+        for relocation in tqdm(
+            section.iter_relocations(), colour="green", unit="relocations", total=total
+        ):
             addr = relocation["r_offset"]
 
-            if not data_section["sh_addr"] <= addr < data_section["sh_addr"] + data_section["sh_size"]:
+            if (
+                not data_section["sh_addr"]
+                <= addr
+                < data_section["sh_addr"] + data_section["sh_size"]
+            ):
                 continue
 
             if is64bit:
@@ -140,6 +150,8 @@ with open(libunity_path, "rb") as libunity:
 
     pointer_candidates = []
     for addr in tqdm(relocations, colour="green", unit="relocations"):
+        if addr < 16:
+            continue
         libunity.seek(addr - 16)
         candidate = libunity.read(16)
         if candidate == b"\x02\0\0\0\x7c\0\0\0\x06\x0b\0\0\0\x02\0\0\0":
@@ -163,13 +175,9 @@ with open(libunity_path, "rb") as libunity:
     metadata = libunity.read(30_000_000)
 
 if is64bit:
-    index = metadata.find(
-        b"\x15\x00\x0c\x0c\x10\x1b\x23\0\0\0\0\0\x28\0\x2c\x10"
-    )
+    index = metadata.find(b"\x15\x00\x0c\x0c\x10\x1b\x23\0\0\0\0\0\x28\0\x2c\x10")
 else:
-    index = metadata.find(
-        b"\x00\x01\x01\x02\x01\x02\x02\x03"
-    )
+    index = metadata.find(b"\x00\x01\x01\x02\x01\x02\x02\x03")
 
 if index != -1:
     index += (4 - index % 4) % 4
@@ -623,7 +631,11 @@ apply_heuristic("parameters", parameters_callback, "<III", True, None)
 apply_heuristic("fields", fields_callback, "<III", True, None)
 apply_heuristic("genericParameters", genericParameters_callback, "<IIHHHH", True, None)
 apply_heuristic(
-    "genericParameterConstraints", genericParameterConstraints_callback, "<I", True, None
+    "genericParameterConstraints",
+    genericParameterConstraints_callback,
+    "<I",
+    True,
+    None,
 )
 apply_heuristic("genericContainers", genericContainers_callback, "<IIII", False, None)
 apply_heuristic("nestedTypes", nestedTypes_callback, "<I", False, None)

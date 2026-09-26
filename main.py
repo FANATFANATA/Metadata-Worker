@@ -1,23 +1,29 @@
 import argparse
-from collections import Counter
 import itertools
-import sys
-import threading
-import time
 import json
 import logging
+import mmap
 import os
 import struct
 import subprocess
-from typing import Any, Callable, List, Optional, Tuple
+import sys
+import threading
+import time
+from collections import Counter
+from contextlib import contextmanager
+from logging.handlers import RotatingFileHandler
+from typing import Any, Callable, Iterator, List, Optional, Sequence, Tuple
 
+tk: Any = None
+filedialog: Any = None
+TKINTER_AVAILABLE = False
 try:
     import tkinter as tk
     from tkinter import filedialog
 
     TKINTER_AVAILABLE = True
 except ImportError:
-    TKINTER_AVAILABLE = False
+    pass
 
 if getattr(sys, "frozen", False):
     script_dir = os.path.dirname(sys.executable)
@@ -27,15 +33,42 @@ if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
 import i18n
 
+VERSION = "1.1.0"
 CONFIG_FILE = os.path.join(script_dir, "config.json")
 LOG_FILE = os.path.join(script_dir, "metadata-worker.log")
-VERSION = "1.0.0"
+DUMP_FILE = os.path.join(script_dir, "debug-metadata.bin")
+EXTRACTED_NAME = "metadata.dat"
+RECONSTRUCTED_NAME = "output-metadata.dat"
+
 METADATA_MAGIC = b"\xf1\xfa\x11\xfa"
+METADATA_HEADER_MAGIC = b"\xaf\x1b\xb1\xfa"
+METADATA_HEADER_SIZE = 256
+METADATA_VERSION_STUB = b"\x1f\x00\x00\x00"
+METADATA_DATA_OFFSET_STUB = b"\x00\x01\x00\x00"
 METADATA_SIGNATURE = b"\x02\0\0\0\x7c\0\0\0\x06\x0b\0\0\0\x02\0\0\0"
 METADATA_MARKER_64 = b"\x15\x00\x0c\x0c\x10\x1b\x23\0\0\0\0\0\x28\0\x2c\x10"
 METADATA_MARKER_32 = b"\x00\x01\x01\x02\x01\x02\x02\x03"
-METADATA_HEADER_MAGIC = b"\xaf\x1b\xb1\xfa"
-COMMON_XOR_KEYS = [[0x53], [0xA3], [0x12, 0x34], [0xFF, 0xFF, 0xFF, 0xFF]]
+
+HEADER_SLOTS = 31
+SECTION_SLOTS = 28
+DEFAULT_MAX_SIZE = 30_000_000
+PROBE_SIZE = 0x1000
+MAX_RECENT_FILES = 10
+MENU_RECENT_LIMIT = 5
+LOG_MAX_BYTES = 2 * 1024 * 1024
+LOG_BACKUP_COUNT = 3
+DENSITY_WINDOW = 4096
+DENSITY_THRESHOLD = 0.75
+XXTEA_DELTA = 0x9E3779B9
+STRIPED_XOR_KEYS = (0xA3, 0x53)
+STRIPED_XOR_STRIPE = 0x1000
+RC4_KEYS = (b"NEP2", b"Tarkov", b"wanzg")
+XXTEA_KEYS = (
+    b"\x00" * 16,
+    b"\xff" * 16,
+    b"\x12\x34\x56\x78\x9a\xbc\xde\xf0" * 2,
+)
+
 SUPPORTED_VERSIONS = {
     16: "Unity 5.3",
     17: "Unity 5.4",
@@ -65,17 +98,18 @@ SUPPORTED_VERSIONS = {
     42: "Unity 2023.1",
     43: "Unity 2023.2",
 }
+
 DEFAULT_CONFIG = {
     "language": "en",
     "recent_files": [],
     "last_output_dir": "",
 }
-config = DEFAULT_CONFIG.copy()
-logger = None
-ELFTOOLS_AVAILABLE = False
 
-Style = None
-tqdm = None
+config: dict = DEFAULT_CONFIG.copy()
+logger: Optional[logging.Logger] = None
+ELFTOOLS_AVAILABLE = False
+ELFFile: Any = None
+dump_debug = True
 
 COLOR_PRIMARY = "\033[38;2;188;39;50m"
 COLOR_SUCCESS = "\033[38;2;0;200;0m"
@@ -84,325 +118,423 @@ COLOR_ERROR = "\033[38;2;255;50;50m"
 COLOR_ACCENT = "\033[38;2;0;150;255m"
 
 
-def ensure_dependency(package_name, import_name=None):
-    if import_name is None:
-        import_name = package_name
+class StyleFallback:
+    RESET_ALL = ""
+    BRIGHT = ""
+
+
+class TqdmFallback:
+    def __init__(self, iterable: Any = None, **_: Any) -> None:
+        self.iterable: Any = [] if iterable is None else iterable
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter(self.iterable)
+
+    def __enter__(self) -> "TqdmFallback":
+        return self
+
+    def __exit__(self, *_: Any) -> bool:
+        return False
+
+    def update(self, n: int = 1) -> None:
+        return None
+
+    def set_description(self, *_: Any) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+Style: Any = StyleFallback
+tqdm: Any = TqdmFallback
+
+
+def paint(text: str, color: str, bright: bool = False) -> str:
+    prefix = color + (Style.BRIGHT if bright else "")
+    return f"{prefix}{text}{Style.RESET_ALL}"
+
+
+def prompt(text: str) -> Optional[str]:
     try:
-        __import__(import_name)
+        return input(text).strip().strip('"').strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+
+
+def ensure_dependency(package_name: str, import_name: Optional[str] = None) -> bool:
+    module_name = import_name or package_name
+    try:
+        __import__(module_name)
         return True
     except ImportError:
         print(i18n.get("dep_missing").format(package=package_name))
-        while True:
-            try:
-                ans = input(i18n.get("dep_install_prompt")).strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                ans = "n"
-            if ans in ("y", "n"):
-                break
-        if ans == "y":
-            print(i18n.get("dep_installing").format(package=package_name))
-            try:
-                subprocess.check_call(
-                    [sys.executable, "-m", "pip", "install", package_name]
-                )
-                __import__(import_name)
-                return True
-            except Exception as e:
-                print(i18n.get("dep_failed").format(package=package_name, error=e))
-                sys.exit(1)
-        else:
+        answer = prompt(i18n.get("dep_install_prompt").format(package=package_name))
+        if answer is None or answer.lower() not in ("y", "yes"):
             print(i18n.get("dep_cancelled"))
+            sys.exit(1)
+        print(i18n.get("dep_installing").format(package=package_name))
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", package_name]
+            )
+            __import__(module_name)
+            return True
+        except Exception as error:
+            print(i18n.get("dep_failed").format(package=package_name, error=error))
             sys.exit(1)
 
 
-def setup_logging():
+def setup_logging() -> None:
     global logger
     logger = logging.getLogger("MetadataWorker")
     logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
     try:
-        file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
-        file_handler.setLevel(logging.DEBUG)
-        formatter = logging.Formatter(
-            "%(asctime)s - %(levelname)s - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
+        file_handler = RotatingFileHandler(
+            LOG_FILE,
+            maxBytes=LOG_MAX_BYTES,
+            backupCount=LOG_BACKUP_COUNT,
+            encoding="utf-8",
         )
-        file_handler.setFormatter(formatter)
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s - %(levelname)s - %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
         logger.addHandler(file_handler)
     except (IOError, OSError):
         pass
 
 
-def log_info(message: str):
+def log_info(message: str) -> None:
     if logger:
         logger.info(message)
 
 
-def log_error(message: str):
+def log_error(message: str) -> None:
     if logger:
         logger.error(message)
 
 
-def log_debug(message: str):
+def log_debug(message: str) -> None:
     if logger:
         logger.debug(message)
 
 
-def log_warning(message: str):
+def log_warning(message: str) -> None:
     if logger:
         logger.warning(message)
 
 
-def load_config():
-    global config
+def load_config() -> None:
+    if not os.path.exists(CONFIG_FILE):
+        return
     try:
-        if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                saved_config = json.load(f)
-                config.update(saved_config)
-                i18n.set_language(config.get("language", "en"))
-    except (json.JSONDecodeError, IOError):
-        pass
+        with open(CONFIG_FILE, "r", encoding="utf-8") as handle:
+            saved = json.load(handle)
+    except (json.JSONDecodeError, IOError, OSError) as error:
+        log_warning(f"Failed to read config: {error}")
+        return
+    if not isinstance(saved, dict):
+        log_warning("Config root is not an object")
+        return
+    language = saved.get("language")
+    if isinstance(language, str):
+        config["language"] = language
+    recent = saved.get("recent_files")
+    if isinstance(recent, list):
+        config["recent_files"] = [
+            path
+            for path in recent[:MAX_RECENT_FILES]
+            if isinstance(path, str) and os.path.isfile(path)
+        ]
+    last_output_dir = saved.get("last_output_dir")
+    config["last_output_dir"] = (
+        last_output_dir if isinstance(last_output_dir, str) else ""
+    )
+    i18n.set_language(config["language"])
 
 
-def save_config():
+def save_config() -> None:
     try:
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-    except (IOError, OSError) as e:
-        log_error(f"Failed to save config: {e}")
+        with open(CONFIG_FILE, "w", encoding="utf-8") as handle:
+            json.dump(config, handle, indent=2, ensure_ascii=False)
+    except (IOError, OSError) as error:
+        log_error(f"Failed to save config: {error}")
 
 
-def add_recent_file(path: str):
-    recent = config.get("recent_files", [])
-    if path in recent:
-        recent.remove(path)
+def add_recent_file(path: str) -> None:
+    recent = [item for item in config.get("recent_files", []) if item != path]
     recent.insert(0, path)
-    config["recent_files"] = recent[:10]
+    config["recent_files"] = recent[:MAX_RECENT_FILES]
     save_config()
 
 
-def clear_screen():
-    os.system("cls" if os.name == "nt" else "clear")
+def clear_screen() -> None:
+    if not sys.stdout or not sys.stdout.isatty():
+        return
+    if os.name == "nt":
+        os.system("cls")
+    else:
+        sys.stdout.write("\033[2J\033[H")
+    sys.stdout.flush()
+
+
+BOX_WIDTH = 58
+MENU_WIDTH = 62
+
+
+def box_top(width: int = BOX_WIDTH) -> None:
+    print(paint(f"┌{'─' * width}┐", COLOR_PRIMARY))
+
+
+def box_title(text: str, width: int = BOX_WIDTH) -> None:
+    print(paint(f"│  {text[: width - 2]:^{width - 2}}│", COLOR_PRIMARY))
+    print(paint(f"└{'─' * width}┘", COLOR_PRIMARY))
 
 
 def select_file_cli(title: str) -> str:
-    if Style:
-        print(f"{COLOR_PRIMARY}{title}{Style.RESET_ALL}")
-    else:
-        print(title)
-    recent = config.get("recent_files", [])
+    print(paint(title, COLOR_PRIMARY))
+    recent = config.get("recent_files", [])[:MENU_RECENT_LIMIT]
     if recent:
-        print(
-            f"{COLOR_PRIMARY}Recent files:{Style.RESET_ALL}"
-            if Style
-            else "Recent files:"
-        )
-        for i, path in enumerate(recent[:5], 1):
-            print(f"  [{i}] {path}")
+        print(paint(i18n.get("recent_files"), COLOR_PRIMARY))
+        for index, path in enumerate(recent, 1):
+            print(f"  [{index}] {path}")
     while True:
-        try:
-            path = input(i18n.get("path_to_file")).strip()
-        except (EOFError, KeyboardInterrupt):
+        entered = prompt(i18n.get("path_to_file"))
+        if entered is None or entered.lower() == "q":
             return ""
-        if path.lower() == "q":
-            return ""
+        path = os.path.expanduser(entered)
         if path.isdigit() and 1 <= int(path) <= len(recent):
             path = recent[int(path) - 1]
         if os.path.isfile(path):
             add_recent_file(path)
             return path
-        print(
-            f"{COLOR_ERROR}{i18n.get('file_not_found')}{Style.RESET_ALL}"
-            if Style
-            else i18n.get("file_not_found")
-        )
+        print(paint(i18n.get("file_not_found"), COLOR_ERROR))
 
 
 def select_save_file_cli(title: str, defaultextension: str = "") -> str:
-    if Style:
-        print(f"{COLOR_PRIMARY}{title}{Style.RESET_ALL}")
-    else:
-        print(title)
+    print(paint(title, COLOR_PRIMARY))
     while True:
-        try:
-            path = input(i18n.get("path_to_save")).strip()
-        except (EOFError, KeyboardInterrupt):
+        entered = prompt(i18n.get("path_to_save"))
+        if entered is None or entered.lower() == "q":
             return ""
-        if path.lower() == "q":
-            return ""
-        if path:
-            if defaultextension and not path.endswith(defaultextension):
-                path += defaultextension
-            return path
-        print(
-            f"{COLOR_ERROR}{i18n.get('enter_path')}{Style.RESET_ALL}"
-            if Style
-            else i18n.get("enter_path")
-        )
+        path = os.path.expanduser(entered)
+        if not path:
+            print(paint(i18n.get("enter_path"), COLOR_ERROR))
+            continue
+        if defaultextension and not path.endswith(defaultextension):
+            path += defaultextension
+        return path
+
+
+def tk_dialog(runner: Callable, title: str, **kwargs: Any) -> Optional[str]:
+    root = None
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        return runner(title=title, **kwargs) or ""
+    except Exception as error:
+        log_debug(f"tkinter dialog unavailable: {error}")
+        return None
+    finally:
+        if root is not None:
+            try:
+                root.destroy()
+            except Exception:
+                pass
+
+
+def dialog_defaults() -> dict:
+    last_dir = config.get("last_output_dir") or os.path.expanduser("~")
+    return {"initialdir": last_dir}
 
 
 def select_file(title: str, filetypes: list) -> str:
     if TKINTER_AVAILABLE:
-        root = None
-        try:
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            file_path = filedialog.askopenfilename(title=title, filetypes=filetypes)
-            if file_path:
-                add_recent_file(file_path)
-                return file_path
-        except tk.TclError:
-            pass
-        finally:
-            if root:
-                root.destroy()
+        path = tk_dialog(
+            filedialog.askopenfilename, title, filetypes=filetypes, **dialog_defaults()
+        )
+        if path is not None:
+            if path:
+                add_recent_file(path)
+            return path
     return select_file_cli(title)
 
 
 def select_save_file(title: str, filetypes: list, defaultextension: str = "") -> str:
     if TKINTER_AVAILABLE:
-        root = None
-        try:
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            file_path = filedialog.asksaveasfilename(
-                title=title, filetypes=filetypes, defaultextension=defaultextension
-            )
-            return file_path
-        except tk.TclError:
-            pass
-        finally:
-            if root:
-                root.destroy()
-    return select_save_file_cli(title, defaultextension)
+        path = tk_dialog(
+            filedialog.asksaveasfilename,
+            title,
+            filetypes=filetypes,
+            defaultextension=defaultextension,
+            **dialog_defaults(),
+        )
+        if path is not None:
+            if path:
+                config["last_output_dir"] = os.path.dirname(os.path.abspath(path))
+                save_config()
+            return path
+    path = select_save_file_cli(title, defaultextension)
+    if path:
+        config["last_output_dir"] = os.path.dirname(os.path.abspath(path))
+        save_config()
+    return path
 
 
 _spinner_stop = threading.Event()
 
 
-def loading_animation():
-    _spinner_stop.clear()
-    def _spin():
-        for c in itertools.cycle('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'):
+def _spin(text: str) -> None:
+    while not _spinner_stop.is_set():
+        for char in itertools.cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"):
             if _spinner_stop.is_set():
                 break
-            sys.stdout.write(f'\r{COLOR_PRIMARY}{c}{Style.RESET_ALL}')
+            sys.stdout.write(f"\r{paint(char + ' ' + text, COLOR_PRIMARY)}")
             sys.stdout.flush()
             time.sleep(0.08)
-        sys.stdout.write('\r' + ' ' * 10 + '\r')
-    t = threading.Thread(target=_spin, daemon=True)
-    t.start()
+    sys.stdout.write("\r" + " " * (len(text) + 4) + "\r")
+    sys.stdout.flush()
 
 
-def stop_loading():
-    _spinner_stop.set()
+@contextmanager
+def loading(text: str) -> Iterator[None]:
+    _spinner_stop.clear()
+    thread = threading.Thread(target=_spin, args=(text,), daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        _spinner_stop.set()
+        thread.join(timeout=1.0)
+
+
+def write_output(data: bytes, path: str, default_name: str) -> str:
+    if os.path.isdir(path):
+        path = os.path.join(path, default_name)
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(data)
+    return path
+
+
+def find_pattern(path: str, pattern: bytes) -> List[int]:
+    hits: List[int] = []
+    with open(path, "rb") as handle:
+        if os.fstat(handle.fileno()).st_size == 0:
+            return hits
+        with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
+            start = 0
+            while True:
+                index = mapped.find(pattern, start)
+                if index == -1:
+                    break
+                hits.append(index)
+                start = index + 1
+    return hits
 
 
 def is_valid_metadata(data: bytes) -> bool:
-    if len(data) < 4:
-        return False
-    return data[:4] == METADATA_MAGIC
+    return len(data) >= 4 and data.startswith(METADATA_MAGIC)
 
 
 def get_metadata_version(data: bytes) -> Tuple[int, str]:
     if len(data) < 8:
         return -1, "Unknown"
-    version = struct.unpack("<I", data[4:8])[0]
-    desc = SUPPORTED_VERSIONS.get(version, f"Unknown (v{version})")
-    return version, desc
+    version = struct.unpack_from("<I", data, 4)[0]
+    return version, SUPPORTED_VERSIONS.get(version, f"Unknown (v{version})")
 
 
-def decrypt_xor(data: bytes, key: List[int]) -> bytes:
-    result = bytearray(len(data))
-    klen = len(key)
-    for i in range(len(data)):
-        result[i] = data[i] ^ key[i % klen]
-    return bytes(result)
-
-
-def decrypt_xxtea(data: bytes, key: bytes) -> bytes:
-    if len(key) < 4:
+def xor_bytes(data: bytes, key: bytes) -> bytes:
+    if not key or not data:
         return data
-    sum_val, delta = 0x00000000, 0x9E3779B9
-    if len(data) % 4 != 0 or len(data) // 4 < 2:
+    repeats = (len(data) + len(key) - 1) // len(key)
+    stream = (key * repeats)[: len(data)]
+    return (int.from_bytes(data, "big") ^ int.from_bytes(stream, "big")).to_bytes(
+        len(data), "big"
+    )
+
+
+def decrypt_xor(data: bytes, key: Sequence[int]) -> bytes:
+    if not key:
         return data
+    return xor_bytes(data, bytes(key))
+
+
+def decrypt_striped_xor(data: bytes, key: int = 0xA3) -> bytes:
     out = bytearray(data)
-    key_idx = len(key) // 4
-    if key_idx < 1:
-        return data
-    for i in range(0, len(out), 8):
-        if i + 8 > len(out):
-            break
-        v = list(struct.unpack_from("<II", out, i))
-        sum_val = (delta * 32) & 0xFFFFFFFF
-        for _ in range(32):
-            v[1] = (
-                v[1]
-                - (
-                    ((v[0] << 4) + v[0])
-                    ^ (v[0] + sum_val)
-                    ^ ((v[0] >> 5) + key[(sum_val >> 11) & (key_idx - 1)])
-                )
-            ) & 0xFFFFFFFF
-            v[0] = (
-                v[0]
-                - (
-                    ((v[1] << 4) + v[1])
-                    ^ (v[1] + sum_val)
-                    ^ ((v[1] >> 5) + key[sum_val & (key_idx - 1)])
-                )
-            ) & 0xFFFFFFFF
-            sum_val = (sum_val - delta) & 0xFFFFFFFF
-        struct.pack_into("<II", out, i, v[0], v[1])
+    for start in range(0, len(out), STRIPED_XOR_STRIPE * 2):
+        for index in range(start, min(start + STRIPED_XOR_STRIPE, len(out))):
+            out[index] ^= key
     return bytes(out)
 
 
 def decrypt_rc4(data: bytes, key: bytes = b"wanzg") -> bytes:
-    S = list(range(256))
+    if not key:
+        return data
+    state = list(range(256))
+    key_length = len(key)
     j = 0
     for i in range(256):
-        j = (j + S[i] + key[i % len(key)]) % 256
-        S[i], S[j] = S[j], S[i]
-    i = j = 0
-    out = bytearray(len(data))
+        j = (j + state[i] + key[i % key_length]) & 0xFF
+        state[i], state[j] = state[j], state[i]
+    stream = bytearray(len(data))
+    i = 0
+    j = 0
     for n in range(len(data)):
-        i = (i + 1) % 256
-        j = (j + S[i]) % 256
-        S[i], S[j] = S[j], S[i]
-        out[n] = data[n] ^ S[(S[i] + S[j]) % 256]
-    return bytes(out)
+        i = (i + 1) & 0xFF
+        j = (j + state[i]) & 0xFF
+        state[i], state[j] = state[j], state[i]
+        stream[n] = state[(state[i] + state[j]) & 0xFF]
+    return xor_bytes(data, bytes(stream))
 
 
-def auto_find_xor_key(data: bytes) -> Optional[List[int]]:
-    if len(data) < 0x120:
-        return None
-    target = b"\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00"
-    for klen in range(3, 13):
-        for i in range(0x100, min(0x140, len(data) - len(target))):
-            if i + len(target) > len(data):
-                continue
-            key = [data[i + j] ^ target[j] for j in range(len(target))]
-            valid = True
-            for j in range(klen, len(target)):
-                if key[j] != key[j % klen]:
-                    valid = False
-                    break
-            if valid:
-                return list(dict.fromkeys(key))[:klen]
-    return None
+def decrypt_xxtea(data: bytes, key: bytes, max_words: int = PROBE_SIZE) -> bytes:
+    if len(data) < 8 or len(key) < 16:
+        return data
+    words = min(len(data) // 4, max_words)
+    words -= words % 2
+    if words < 2:
+        return data
+    keys = struct.unpack_from("<4I", key, 0)
+    values = list(struct.unpack_from(f"<{words}I", data, 0))
+    rounds = 6 + 52 // words
+    total = (rounds * XXTEA_DELTA) & 0xFFFFFFFF
+    y = values[0]
+    for _ in range(rounds):
+        e = (total >> 2) & 3
+        for p in range(words - 1, 0, -1):
+            z = values[p - 1]
+            mx = (((z >> 5) ^ (y << 2)) + ((y >> 3) ^ (z << 4))) ^ (
+                (total ^ y) + (keys[(p & 3) ^ e] ^ z)
+            )
+            values[p] = (values[p] - mx) & 0xFFFFFFFF
+            y = values[p]
+        z = values[words - 1]
+        mx = (((z >> 5) ^ (y << 2)) + ((y >> 3) ^ (z << 4))) ^ (
+            (total ^ y) + (keys[e] ^ z)
+        )
+        values[0] = (values[0] - mx) & 0xFFFFFFFF
+        y = values[0]
+        total = (total - XXTEA_DELTA) & 0xFFFFFFFF
+    return struct.pack(f"<{words}I", *values) + data[words * 4 :]
 
 
 def auto_header_xor_key(data: bytes) -> Optional[List[int]]:
     if len(data) < 8:
         return None
-    expected_magic = METADATA_MAGIC
-    key = [data[i] ^ expected_magic[i] for i in range(4)]
-    if all(k != 0 for k in key):
-        test_decrypt = decrypt_xor(data[:16], key)
-        if test_decrypt[:4] == METADATA_MAGIC:
-            return key
+    key = [data[index] ^ METADATA_MAGIC[index] for index in range(4)]
+    if len(set(key)) == 1 and key[0] != 0:
+        return key
     return None
 
 
@@ -410,88 +542,122 @@ def auto_wanzg_key(data: bytes) -> Optional[List[int]]:
     if len(data) < 0x120:
         return None
     target = b"\x00" * 8 + b"\x01\x00\x00\x00"
-    for i in range(0x100, 0x118):
-        if i + 12 > len(data):
-            continue
-        k = [data[i + j] ^ target[j] for j in range(12)]
-        if k[0] == k[4] and k[1] == k[5] and k[2] == k[6]:
-            return k[:5]
+    for index in range(0x100, 0x118):
+        if index + len(target) > len(data):
+            break
+        key = [data[index + offset] ^ target[offset] for offset in range(len(target))]
+        if key[0] == key[4] and key[1] == key[5] and key[2] == key[6]:
+            return key[:5]
     return None
 
 
-def decrypt_striped_xor(data: bytes, key: int = 0xA3, stripe: int = 0x1000) -> bytes:
-    out = bytearray(data)
-    for i in range(0, len(out), stripe * 2):
-        for j in range(min(stripe, len(out) - i)):
-            out[i + j] ^= key
-    return bytes(out)
+def auto_find_xor_key(data: bytes) -> Optional[List[int]]:
+    if len(data) < 0x120:
+        return None
+    target = b"\x00" * 8 + b"\x01\x00\x00\x00"
+    limit = min(0x140, len(data) - len(target))
+    for index in range(0x100, max(0x100, limit)):
+        key = [data[index + offset] ^ target[offset] for offset in range(len(target))]
+        for period in range(3, len(key) + 1):
+            if all(
+                key[position] == key[position % period]
+                for position in range(period, len(key))
+            ):
+                return key[:period]
+    return None
 
 
 def try_decrypt_metadata(data: bytes) -> Tuple[bytes, Optional[str]]:
     if is_valid_metadata(data):
         return data, None
-    key = auto_header_xor_key(data)
-    if key:
-        decrypted = decrypt_xor(data, key)
-        if is_valid_metadata(decrypted):
-            return decrypted, f"HEADER-XOR:{key}"
-    key = auto_wanzg_key(data)
-    if key:
-        decrypted = decrypt_xor(data, key)
-        if is_valid_metadata(decrypted):
-            return decrypted, f"WANZG:{key}"
-    key = auto_find_xor_key(data)
-    if key:
-        decrypted = decrypt_xor(data, key)
-        if is_valid_metadata(decrypted):
-            return decrypted, f"AUTO-XOR:{key}"
-    decrypted = decrypt_striped_xor(data)
-    if is_valid_metadata(decrypted):
-        return decrypted, "STRIPED-XOR-0xA3"
-    decrypted = decrypt_striped_xor(data, 0x53)
-    if is_valid_metadata(decrypted):
-        return decrypted, "STRIPED-XOR-0x53"
-    for key in COMMON_XOR_KEYS:
-        decrypted = decrypt_xor(data, key)
-        if is_valid_metadata(decrypted):
-            return decrypted, f"XOR:{key}"
-    for key_len in [4, 8, 16, 32]:
-        test_key = list(data[:key_len])
-        decrypted = decrypt_xor(data, test_key)
-        if is_valid_metadata(decrypted):
-            return decrypted, f"XOR:{test_key}"
-    decrypted = decrypt_rc4(data)
-    if is_valid_metadata(decrypted):
-        return decrypted, "RC4"
-    for rc4_key in [b"NEP2", b"Tarkov", b"wanzg"]:
-        decrypted = decrypt_rc4(data, rc4_key)
-        if is_valid_metadata(decrypted):
-            return decrypted, f"RC4-{rc4_key.decode()}"
-    for key in [b"\x00" * 16, b"\xff" * 16, b"\x12\x34\x56\x78\x9a\xbc\xde\xf0" * 2]:
-        decrypted = decrypt_xxtea(data, key)
-        if is_valid_metadata(decrypted):
-            return decrypted, f"XXTEA:{key.hex()}"
+    attempts: List[Tuple[str, Callable[[bytes], bytes]]] = []
+    header_key = auto_header_xor_key(data)
+    if header_key:
+        attempts.append(
+            (
+                f"HEADER-XOR:{header_key}",
+                lambda chunk, k=header_key: decrypt_xor(chunk, k),
+            )
+        )
+    wanzg_key = auto_wanzg_key(data)
+    if wanzg_key:
+        attempts.append(
+            (f"WANZG:{wanzg_key}", lambda chunk, k=wanzg_key: decrypt_xor(chunk, k))
+        )
+    scan_key = auto_find_xor_key(data)
+    if scan_key:
+        attempts.append(
+            (f"AUTO-XOR:{scan_key}", lambda chunk, k=scan_key: decrypt_xor(chunk, k))
+        )
+    for key in STRIPED_XOR_KEYS:
+        attempts.append(
+            (
+                f"STRIPED-XOR-0x{key:02X}",
+                lambda chunk, k=key: decrypt_striped_xor(chunk, k),
+            )
+        )
+    for key in RC4_KEYS:
+        attempts.append(
+            (f"RC4-{key.decode()}", lambda chunk, k=key: decrypt_rc4(chunk, k))
+        )
+    for key in XXTEA_KEYS:
+        attempts.append(
+            (
+                f"XXTEA-{key.hex()}",
+                lambda chunk, k=key: decrypt_xxtea(chunk, k, len(chunk) // 4),
+            )
+        )
+    for label, cipher in attempts:
+        if is_valid_metadata(cipher(data[:PROBE_SIZE])):
+            return cipher(data), label
     return data, None
 
 
-def find_metadata_in_libunity(libunity_path: str) -> Optional[int]:
-    with open(libunity_path, "rb") as f:
-        data = f.read()
-    idx = data.find(METADATA_MAGIC)
-    if idx != -1:
-        print(
-            f"{COLOR_SUCCESS}Found embedded metadata at offset {hex(idx)}{Style.RESET_ALL}"
-        )
-        log_info(f"Found metadata in libunity at offset {hex(idx)}")
-        return idx
-    return None
+def is_elf_file(path: str) -> bool:
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(4) == b"\x7fELF"
+    except (IOError, OSError):
+        return False
 
 
-def map_vaddr_to_offset(va: int, load_segments: List[Tuple[int, int, int]]) -> int:
+def find_embedded_metadata(path: str) -> Optional[int]:
+    hits = find_pattern(path, METADATA_MAGIC)
+    if not hits:
+        return None
+    fallback: Optional[int] = None
+    with open(path, "rb") as handle:
+        size = os.fstat(handle.fileno()).st_size
+        for offset in hits:
+            if offset + 8 > size:
+                continue
+            handle.seek(offset + 4)
+            version = struct.unpack("<I", handle.read(4))[0]
+            log_debug(f"Metadata magic at {hex(offset)}, version field {version}")
+            if version in SUPPORTED_VERSIONS or version < 0x100:
+                return offset
+            if fallback is None:
+                fallback = offset
+    return fallback
+
+
+def map_vaddr_to_offset(
+    va: int, load_segments: List[Tuple[int, int, int]]
+) -> Optional[int]:
     for start, end, offset in load_segments:
         if start <= va < end:
             return va - start + offset
-    raise ValueError(f"Virtual address {hex(va)} not found in LOAD segments")
+    return None
+
+
+def collect_load_segments(elf: Any) -> List[Tuple[int, int, int]]:
+    segments = []
+    for segment in elf.iter_segments():
+        if segment["p_type"] != "PT_LOAD" or segment["p_filesz"] == 0:
+            continue
+        start = segment["p_vaddr"]
+        segments.append((start, start + segment["p_filesz"], segment["p_offset"]))
+    return sorted(segments)
 
 
 def extract_metadata_pointer(libunity_path: str) -> Optional[int]:
@@ -500,35 +666,26 @@ def extract_metadata_pointer(libunity_path: str) -> Optional[int]:
     try:
         with open(libunity_path, "rb") as libunity:
             elf = ELFFile(libunity)
-            is64bit = elf.get_machine_arch() == "AArch64"
-            load_segments = [
-                (seg["p_vaddr"], seg["p_vaddr"] + seg["p_memsz"], seg["p_offset"])
-                for seg in elf.iter_segments()
-                if seg["p_type"] == "PT_LOAD"
-            ]
+            is64bit = elf.elfclass == 64
+            load_segments = collect_load_segments(elf)
             data_section = elf.get_section_by_name(".data")
             if not data_section:
-                print(f"{COLOR_ERROR}Error: .data section not found.{Style.RESET_ALL}")
+                print(paint(i18n.get("data_section_missing"), COLOR_ERROR))
                 log_error(".data section not found")
                 return None
-            print(f"{COLOR_PRIMARY}Collecting relocations...{Style.RESET_ALL}")
+            data_start = data_section["sh_addr"]
+            data_end = data_start + data_section["sh_size"]
+            print(paint(i18n.get("collecting_relocations"), COLOR_PRIMARY))
             log_debug("Collecting relocations")
-            relocations = []
+            pointers: List[int] = []
             for section in elf.iter_sections():
                 if section.header["sh_type"] not in ("SHT_REL", "SHT_RELA"):
                     continue
-                if is64bit:
-                    total = section.header["sh_size"] // (
-                        24
-                        if section.header["sh_type"] == "SHT_RELA"
-                        else 16
-                    )
-                else:
-                    total = section.header["sh_size"] // (
-                        12
-                        if section.header["sh_type"] == "SHT_RELA"
-                        else 8
-                    )
+                total = (
+                    section.num_relocations()
+                    if hasattr(section, "num_relocations")
+                    else None
+                )
                 for relocation in tqdm(
                     section.iter_relocations(),
                     colour="green",
@@ -536,160 +693,157 @@ def extract_metadata_pointer(libunity_path: str) -> Optional[int]:
                     total=total,
                     leave=False,
                 ):
-                    addr = relocation["r_offset"]
-                    if not (
-                        data_section["sh_addr"]
-                        <= addr
-                        < data_section["sh_addr"] + data_section["sh_size"]
-                    ):
+                    address = relocation["r_offset"]
+                    if not data_start <= address < data_end:
                         continue
                     if is64bit:
-                        try:
-                            pointer = relocation["r_addend"]
-                        except KeyError:
+                        if "r_addend" not in relocation.entry:
                             continue
-                        if pointer != 0:
-                            relocations.append(pointer)
+                        pointer = relocation["r_addend"]
                     else:
-                        try:
-                            offset = map_vaddr_to_offset(addr, load_segments)
-                        except ValueError:
+                        offset = map_vaddr_to_offset(address, load_segments)
+                        if offset is None:
                             continue
                         libunity.seek(offset)
-                        pointer = struct.unpack("<I", libunity.read(4))[0]
-                        if pointer != 0:
-                            relocations.append(pointer)
-            print(f"{COLOR_PRIMARY}Searching for metadata pointer...{Style.RESET_ALL}")
-            candidates = []
-            for addr in tqdm(relocations, colour="green", unit="rel", leave=False):
-                try:
-                    libunity.seek(addr - 16)
-                    data = libunity.read(16)
-                    if data == METADATA_SIGNATURE:
-                        candidates.append(addr)
-                except Exception:
+                        raw = libunity.read(4)
+                        if len(raw) != 4:
+                            continue
+                        pointer = struct.unpack("<I", raw)[0]
+                    if pointer > 16:
+                        pointers.append(pointer)
+            print(paint(i18n.get("searching_pointer"), COLOR_PRIMARY))
+            candidates: List[int] = []
+            for pointer in tqdm(pointers, colour="green", unit="rel", leave=False):
+                offset = map_vaddr_to_offset(pointer - 16, load_segments)
+                if offset is None:
+                    offset = pointer - 16
+                if offset < 0:
                     continue
+                libunity.seek(offset)
+                if libunity.read(len(METADATA_SIGNATURE)) == METADATA_SIGNATURE:
+                    candidates.append(pointer)
             if not candidates:
-                print(
-                    f"{COLOR_WARNING}Warning: No metadata pointer found via relocations, trying alternative method...{Style.RESET_ALL}"
-                )
+                print(paint(i18n.get("no_pointer_relocations"), COLOR_WARNING))
                 return extract_metadata_pointer_alternative(libunity_path)
-            elif len(candidates) > 1:
+            if len(candidates) > 1:
                 print(
-                    f"{COLOR_WARNING}Multiple candidates found, using first: {hex(candidates[0])}{Style.RESET_ALL}"
+                    paint(
+                        i18n.get("multiple_candidates").format(
+                            offset=hex(candidates[0])
+                        ),
+                        COLOR_WARNING,
+                    )
                 )
-            file_offsets = []
-            for va in candidates:
-                try:
-                    file_offsets.append(map_vaddr_to_offset(va, load_segments))
-                except ValueError:
-                    continue
-            if not file_offsets:
-                return extract_metadata_pointer_alternative(libunity_path)
-            return file_offsets[0]
-    except Exception as e:
-        print(f"{COLOR_ERROR}Error extracting metadata pointer: {e}{Style.RESET_ALL}")
-        log_error(f"Pointer extraction error: {e}")
+            for pointer in candidates:
+                offset = map_vaddr_to_offset(pointer, load_segments)
+                if offset is not None:
+                    log_info(
+                        f"Metadata pointer at vaddr {hex(pointer)} offset {hex(offset)}"
+                    )
+                    return offset
+            return extract_metadata_pointer_alternative(libunity_path)
+    except Exception as error:
+        print(paint(f"{i18n.get('error')}{error}", COLOR_ERROR))
+        log_error(f"Pointer extraction error: {error}")
         return None
 
 
 def extract_metadata_pointer_alternative(libunity_path: str) -> Optional[int]:
-    try:
-        with open(libunity_path, "rb") as f:
-            data = f.read()
-    except (IOError, OSError) as e:
-        print(f"{COLOR_ERROR}Error reading libunity.so: {e}{Style.RESET_ALL}")
-        log_error(f"Read error: {e}")
-        return None
-    print(f"{COLOR_PRIMARY}Scanning for metadata magic bytes...{Style.RESET_ALL}")
-    idx = data.find(METADATA_MAGIC)
-    if idx != -1:
-        print(f"{COLOR_SUCCESS}Found metadata at offset: {hex(idx)}{Style.RESET_ALL}")
-        return idx
-    print(f"{COLOR_PRIMARY}Scanning for metadata signature...{Style.RESET_ALL}")
-    idx = data.find(METADATA_SIGNATURE)
-    if idx != -1:
+    print(paint(i18n.get("scanning_magic"), COLOR_PRIMARY))
+    embedded = find_embedded_metadata(libunity_path)
+    if embedded is not None:
         print(
-            f"{COLOR_SUCCESS}Found metadata signature at offset: {hex(idx)}{Style.RESET_ALL}"
+            paint(
+                i18n.get("found_at_offset").format(offset=hex(embedded)), COLOR_SUCCESS
+            )
         )
-        return idx
-    print(f"{COLOR_ERROR}Error: No metadata found in libunity.so{Style.RESET_ALL}")
+        return embedded
+    print(paint(i18n.get("scanning_signature"), COLOR_PRIMARY))
+    for offset in find_pattern(libunity_path, METADATA_SIGNATURE):
+        print(
+            paint(i18n.get("found_at_offset").format(offset=hex(offset)), COLOR_SUCCESS)
+        )
+        return offset
+    print(paint(i18n.get("no_metadata_in_libunity"), COLOR_ERROR))
     return None
 
 
 def truncate_at_end_marker(metadata: bytes) -> Tuple[bytes, bool]:
-    is64bit = True
     index = metadata.find(METADATA_MARKER_64)
+    is64bit = True
     if index == -1:
         index = metadata.find(METADATA_MARKER_32)
         is64bit = False
-    if index != -1:
-        index += (4 - index % 4) % 4
-        if index > 0 and index <= len(metadata):
-            metadata = metadata[:index]
-        print(
-            f"{COLOR_SUCCESS}Metadata end marker found ({'64-bit' if is64bit else '32-bit'}).{Style.RESET_ALL}"
+    if index == -1:
+        print(paint(i18n.get("end_marker_missing"), COLOR_WARNING))
+        return metadata, is64bit
+    index += (4 - index % 4) % 4
+    if 0 < index <= len(metadata):
+        metadata = metadata[:index]
+    print(
+        paint(
+            i18n.get("end_marker_found").format(bits=64 if is64bit else 32),
+            COLOR_SUCCESS,
         )
-    else:
-        print(
-            f"{COLOR_ERROR}Warning: End marker not found, using full dump.{Style.RESET_ALL}"
-        )
+    )
     return metadata, is64bit
 
 
 def extract_metadata(
-    libunity_path: str, size: int = 30_000_000
+    libunity_path: str, size: int = DEFAULT_MAX_SIZE
 ) -> Optional[Tuple[bytes, bool]]:
     log_info(f"Extracting metadata from: {libunity_path}")
+    if not is_elf_file(libunity_path):
+        print(paint(i18n.get("warning_not_elf"), COLOR_WARNING))
     try:
-        embedded_offset = find_metadata_in_libunity(libunity_path)
+        embedded_offset = find_embedded_metadata(libunity_path)
         if embedded_offset is not None:
-            with open(libunity_path, "rb") as f:
-                f.seek(embedded_offset)
-                metadata = f.read(size)
-            metadata, key = try_decrypt_metadata(metadata)
-            if key:
-                print(f"{COLOR_SUCCESS}Auto-decrypted: {key}{Style.RESET_ALL}")
-            version, desc = get_metadata_version(metadata)
             print(
-                f"{COLOR_PRIMARY}Metadata version: {version} ({desc}){Style.RESET_ALL}"
+                paint(
+                    i18n.get("found_embedded").format(offset=hex(embedded_offset)),
+                    COLOR_SUCCESS,
+                )
             )
-            metadata, is64bit = truncate_at_end_marker(metadata)
-            print(
-                f"{COLOR_PRIMARY}Metadata size: {len(metadata)} bytes{Style.RESET_ALL}"
+            offset = embedded_offset
+        else:
+            offset = extract_metadata_pointer(libunity_path)
+            if offset is None:
+                return None
+        with open(libunity_path, "rb") as handle:
+            handle.seek(offset)
+            metadata = handle.read(size)
+        metadata, key = try_decrypt_metadata(metadata)
+        if key:
+            print(paint(i18n.get("auto_decrypted").format(key=key), COLOR_SUCCESS))
+        version, desc = get_metadata_version(metadata)
+        print(
+            paint(
+                i18n.get("metadata_version").format(version=version, desc=desc),
+                COLOR_PRIMARY,
             )
-            return metadata, is64bit
-        metadata_ptr = extract_metadata_pointer(libunity_path)
-        if metadata_ptr is None:
-            return None
-        with open(libunity_path, "rb") as libunity:
-            libunity.seek(metadata_ptr)
-            metadata = libunity.read(size)
-            metadata, key = try_decrypt_metadata(metadata)
-            if key:
-                print(f"{COLOR_SUCCESS}Auto-decrypted: {key}{Style.RESET_ALL}")
-            metadata, is64bit = truncate_at_end_marker(metadata)
-            version, desc = get_metadata_version(metadata)
-            print(
-                f"{COLOR_PRIMARY}Metadata version: {version} ({desc}){Style.RESET_ALL}"
-            )
-            print(
-                f"{COLOR_PRIMARY}Metadata size: {len(metadata)} bytes{Style.RESET_ALL}"
-            )
-            return metadata, is64bit
-    except (IOError, OSError, struct.error) as e:
-        print(f"{COLOR_ERROR}Error extracting metadata: {e}{Style.RESET_ALL}")
-        log_error(f"Extract error: {e}")
+        )
+        metadata, is64bit = truncate_at_end_marker(metadata)
+        print(
+            paint(i18n.get("metadata_size").format(size=len(metadata)), COLOR_PRIMARY)
+        )
+        log_info(
+            f"Extracted {len(metadata)} bytes, is64bit={is64bit}, version={version}"
+        )
+        return metadata, is64bit
+    except (IOError, OSError, struct.error, ValueError) as error:
+        print(paint(f"{i18n.get('error')}{error}", COLOR_ERROR))
+        log_error(f"Extract error: {error}")
         return None
 
 
 def find_offset_candidates(metadata: bytes) -> List[int]:
-    fields = []
-    for i in range(0, 256, 4):
-        value = struct.unpack("<I", metadata[i : i + 4])[0]
+    fields: List[int] = []
+    limit = min(METADATA_HEADER_SIZE, len(metadata) - len(metadata) % 4)
+    for index in range(0, limit - 3, 4):
+        value = struct.unpack_from("<I", metadata, index)[0]
         if 0 < value < len(metadata):
             fields.append(value)
-    candidates = []
+    candidates: List[int] = []
     for field in fields:
         if field < 8192 or field % 4 != 0:
             if field == 256:
@@ -698,131 +852,430 @@ def find_offset_candidates(metadata: bytes) -> List[int]:
         if field > len(metadata) / 3:
             candidates.append(field)
             continue
-        behind = metadata[field - 4096 : field]
-        ahead = metadata[field : field + 4096]
+        behind = metadata[field - DENSITY_WINDOW : field]
+        ahead = metadata[field : field + DENSITY_WINDOW]
         zeroes_behind = behind.count(b"\0")
         zeroes_ahead = ahead.count(b"\0")
         counter_behind = Counter(behind)
         counter_ahead = Counter(ahead)
-        keys = set(counter_behind.keys()) | set(counter_ahead.keys())
-        freq_behind = {k: counter_behind.get(k, 0) / 4096 for k in keys}
-        freq_ahead = {k: counter_ahead.get(k, 0) / 4096 for k in keys}
-        dist = sum(abs(freq_behind[k] - freq_ahead[k]) for k in keys)
-        score = abs(zeroes_behind - zeroes_ahead) / 512 + dist
-        if score > 0.75:
+        keys = set(counter_behind) | set(counter_ahead)
+        distance = sum(
+            abs(counter_behind.get(k, 0) - counter_ahead.get(k, 0)) / DENSITY_WINDOW
+            for k in keys
+        )
+        score = abs(zeroes_behind - zeroes_ahead) / 512 + distance
+        if score > DENSITY_THRESHOLD:
             candidates.append(field)
     return sorted(set(candidates))
 
 
+def build_offsets_to_sizes(
+    metadata: bytes, offset_candidates: List[int]
+) -> List[Tuple[int, int]]:
+    fields = [
+        struct.unpack_from("<I", metadata, index)[0]
+        for index in range(0, METADATA_HEADER_SIZE, 4)
+    ]
+    pairs: List[Tuple[int, int]] = []
+    sizes_only = [value for value in fields if value not in offset_candidates]
+    for possible_offset in offset_candidates:
+        found = False
+        pool = fields if possible_offset == 256 else sizes_only
+        for size in pool:
+            if size == possible_offset or size == 0 or size >= len(metadata) / 3:
+                continue
+            if size + possible_offset == len(metadata):
+                pairs.append((possible_offset, size))
+                found = True
+                break
+            if any(
+                possible_offset + size == next_offset and possible_offset != next_offset
+                for next_offset in offset_candidates
+            ):
+                pairs.append((possible_offset, size))
+                found = True
+                break
+        if found:
+            continue
+        index = offset_candidates.index(possible_offset)
+        next_offset = (
+            offset_candidates[index + 1] if index + 1 < len(offset_candidates) else None
+        )
+        is_256 = possible_offset == 256
+        is_big_enough = possible_offset > len(metadata) / 3
+        is_size_big_enough = (
+            next_offset is not None and next_offset - possible_offset > 4096
+        )
+        did_last_add_up = bool(pairs) and (sum(pairs[-1]) == possible_offset)
+        if (is_256 or is_big_enough or is_size_big_enough) and (
+            did_last_add_up or is_256 or not pairs
+        ):
+            size = (
+                next_offset - possible_offset
+                if next_offset is not None
+                else len(metadata) - possible_offset
+            )
+            pairs.append((possible_offset, size))
+            log_info(f"Approximate section at {possible_offset} with size {size}")
+        else:
+            sizes_only.append(possible_offset)
+    return sorted(pairs, key=lambda pair: pair[0])
+
+
+def parse_entries(data: bytes, struct_sig: str) -> List[Any]:
+    step = struct.calcsize(struct_sig)
+    scalar = struct_sig == "<I"
+    entries: List[Any] = []
+    for index in range(0, len(data) - step + 1, step):
+        try:
+            fields = struct.unpack_from(struct_sig, data, index)
+        except struct.error:
+            break
+        entries.append(fields[0] if scalar else fields)
+    return entries
+
+
 def apply_heuristic(
-    name: str,
-    offsets_to_sizes: List[Tuple[int, int]],
-    metadata: bytes,
-    callback: Optional[Callable[[List[Any]], bool]],
-    struct_sig: Optional[str],
-    prefer_lowest: bool,
-    marker: Optional[bytes],
+    spec: tuple, metadata: bytes, offsets_to_sizes: List[Tuple[int, int]]
 ) -> Tuple[Optional[Tuple[int, int, bytes]], List[Tuple[int, int]]]:
-    found = []
-    remaining = offsets_to_sizes.copy()
-    for offset, size in tqdm(
-        offsets_to_sizes, desc=f"Scanning {name}", colour="green", leave=False
-    ):
+    name, callback, struct_sig, prefer_lowest, marker = spec
+    found: List[Tuple[int, int, bytes]] = []
+    for offset, size in offsets_to_sizes:
         data = metadata[offset : offset + size]
         if marker and marker in data:
             found.append((offset, size, data))
             break
-        if not struct_sig:
+        if not struct_sig or not callback:
             continue
-        step = struct.calcsize(struct_sig)
-        entries = []
-        for i in range(0, len(data), step):
-            try:
-                fields = struct.unpack_from(struct_sig, data, i)
-                entries.append(fields[0] if len(struct_sig) == 2 else fields)
-            except struct.error:
-                break
-        if callback and callback(entries):
+        entries = parse_entries(data, struct_sig)
+        if not entries:
+            continue
+        if callback(entries):
             found.append((offset, size, data))
     if not found:
-        print(f"{COLOR_ERROR + Style.BRIGHT}Failed heuristic: {name}{Style.RESET_ALL}")
+        print(paint(i18n.get("heuristic_failed").format(name=name), COLOR_ERROR, True))
         return None, offsets_to_sizes
-    found.sort(key=lambda x: x[1], reverse=not prefer_lowest)
+    found.sort(key=lambda item: item[1], reverse=not prefer_lowest)
     result = found[0]
+    remaining = list(offsets_to_sizes)
     if result[:2] in remaining:
         remaining.remove(result[:2])
-    print(f"{COLOR_PRIMARY}Found {name} at offset {result[0]}{Style.RESET_ALL}")
+    print(
+        paint(
+            i18n.get("found_section").format(name=name, offset=result[0]), COLOR_PRIMARY
+        )
+    )
     log_debug(f"Found {name} at {result[0]}")
     return result, remaining
 
 
+def string_literal_cb(entries: List[Any]) -> bool:
+    return all(
+        entries[index][1] == entries[0][1] + sum(item[0] for item in entries[:index])
+        for index in range(1, len(entries))
+    )
+
+
+def events_cb(entries: List[Any]) -> bool:
+    wrong = 0
+    last_name_index = entries[0][0]
+    for name_index, _, add, remove, _, _ in entries:
+        if name_index < last_name_index:
+            wrong += 1
+            if wrong > 256:
+                return False
+        if add > 1024 or remove > 1024:
+            return False
+        last_name_index = name_index
+    return True
+
+
+def token_cb_at(index: int, prefix: int) -> Callable[[List[Any]], bool]:
+    def callback(entries: List[Any]) -> bool:
+        return all(entry[index] & 0xFF000000 == prefix for entry in entries)
+
+    return callback
+
+
+def ascending_cb(entries: List[Any]) -> bool:
+    return all(entries[i][0] <= entries[i + 1][0] for i in range(len(entries) - 1))
+
+
+def nested_types_cb(entries: List[Any]) -> bool:
+    right_count, last_index = 0, 0
+    for attempts, index in enumerate(entries, 1):
+        if index > last_index:
+            right_count += 1
+        else:
+            right_count -= 1
+        if right_count > 256:
+            return True
+        if right_count < -4 or index > 0x01000000 or attempts > 512:
+            return False
+        last_index = index
+    return True
+
+
+def interfaces_cb(entries: List[Any]) -> bool:
+    return all(256 <= value <= 1024576 for value in entries)
+
+
+def vtable_methods_cb(entries: List[Any]) -> bool:
+    return all(value == 1 or value & 0xE0000000 != 0 for value in entries)
+
+
+def interface_offsets_cb(entries: List[Any]) -> bool:
+    for type_index, offset in entries:
+        if offset > 256 or type_index < 256 or type_index > 65535:
+            return False
+    return True
+
+
+def type_definitions_cb(entries: List[Any]) -> bool:
+    return all(entry[25] & 0xFF000000 == 0x02000000 for entry in entries)
+
+
+def images_cb(entries: List[Any]) -> bool:
+    if len(entries) < 2:
+        return False
+    return all(entry[7] == 1 for entry in entries[:-2])
+
+
+def field_refs_cb(entries: List[Any]) -> bool:
+    for type_index, field_index in entries:
+        if type_index < 256 or field_index > 2048:
+            return False
+    return True
+
+
+def referenced_assemblies_cb(entries: List[Any]) -> bool:
+    if not entries:
+        return True
+    mean = sum(entries) / len(entries)
+    if not 30 < mean < 40:
+        return False
+    return all(value <= 256 for value in entries)
+
+
+def attribute_data_range_cb(entries: List[Any]) -> bool:
+    right = 0
+    last_index = entries[0][1]
+    if last_index != 0:
+        return False
+    for token, index in entries:
+        right += -10 if token & 0xFF000000 == 0 else 2
+        right += -2 if index < last_index else 1
+        if right > 2048:
+            return True
+        if right < -16:
+            return False
+    return True
+
+
+def unresolved_types_cb(entries: List[Any]) -> bool:
+    return all(256 <= value <= 70000 for value in entries)
+
+
+def unresolved_type_ranges_cb(entries: List[Any]) -> bool:
+    expected = entries[0][0]
+    for start, length in entries:
+        if start != expected:
+            return False
+        expected += length
+    return True
+
+
+def exported_type_definitions_cb(entries: List[Any]) -> bool:
+    return all(64 <= value <= 131072 for value in entries)
+
+
+def generic_parameters_cb(entries: List[Any]) -> bool:
+    expected = entries[0][2]
+    for _, name_index, constraints_start, constraints_count, _, _ in entries:
+        if constraints_start not in (0, expected) or name_index < 256:
+            return False
+        expected += constraints_count
+    return True
+
+
+def generic_constraints_cb(entries: List[Any]) -> bool:
+    return all(256 <= value <= 1024576 for value in entries)
+
+
+def generic_containers_cb(entries: List[Any]) -> bool:
+    for _, type_argc, is_method, _ in entries:
+        if is_method not in (0, 1) or type_argc > 128:
+            return False
+    return True
+
+
+def get_heuristics() -> List[tuple]:
+    return [
+        ("stringLiteral", string_literal_cb, "<II", True, None),
+        (
+            "stringLiteralData",
+            None,
+            None,
+            True,
+            b"\x00\x00\x00\x00\x01\x09\x00\x00\x01",
+        ),
+        ("string", None, None, True, b"Assembly-CSharp\x00\x00\x00\x00\x00Assembl"),
+        ("events", events_cb, "<IIIIII", False, None),
+        ("properties", token_cb_at(4, 0x17000000), "<IIIII", False, None),
+        ("methods", token_cb_at(6, 0x06000000), "<IIIIIIIHHHH", False, None),
+        ("parameterDefaultValues", ascending_cb, "<III", True, None),
+        ("fieldDefaultValues", ascending_cb, "<III", False, None),
+        (
+            "fieldAndParameterDefaultValuesData",
+            None,
+            None,
+            False,
+            b"\\Assets\\ThirdParty\\I2\\Localization",
+        ),
+        ("fieldMarshaledSizes", ascending_cb, "<III", True, None),
+        ("parameters", token_cb_at(1, 0x08000000), "<III", True, None),
+        ("fields", token_cb_at(2, 0x04000000), "<III", True, None),
+        ("genericParameters", generic_parameters_cb, "<IIHHHH", True, None),
+        ("genericParameterConstraints", generic_constraints_cb, "<I", True, None),
+        ("genericContainers", generic_containers_cb, "<IIII", False, None),
+        ("nestedTypes", nested_types_cb, "<I", False, None),
+        ("interfaces", interfaces_cb, "<I", False, None),
+        ("vtableMethods", vtable_methods_cb, "<I", False, None),
+        ("interfaceOffsets", interface_offsets_cb, "<II", False, None),
+        (
+            "typeDefinitions",
+            type_definitions_cb,
+            "<IIIIIIIIIIIIIIIIHHHHHHHHII",
+            False,
+            None,
+        ),
+        ("images", images_cb, "<IIIIIIIIII", False, None),
+        ("assemblies", token_cb_at(1, 0x20000000), "<IIIIIIIIIIIIIIII", False, None),
+        ("fieldRefs", field_refs_cb, "<II", False, None),
+        ("referencedAssemblies", referenced_assemblies_cb, "<I", False, None),
+        ("attributeData", None, None, False, b"NewFragmentBox"),
+        ("attributeDataRange", attribute_data_range_cb, "<II", False, None),
+        (
+            "unresolvedIndirectCallParameterTypes",
+            unresolved_types_cb,
+            "<I",
+            False,
+            None,
+        ),
+        (
+            "unresolvedIndirectCallParameterTypeRanges",
+            unresolved_type_ranges_cb,
+            "<II",
+            False,
+            None,
+        ),
+        ("exportedTypeDefinitions", exported_type_definitions_cb, "<I", False, None),
+    ]
+
+
 def unshuffle_metadata_header(header: bytes, full_size: int) -> Optional[List[int]]:
-    if len(header) < 256:
+    if len(header) < METADATA_HEADER_SIZE:
         return None
-    ints = list(struct.unpack("<64I", header[:256]))
-    offset_counts = {}
-    for val in ints:
-        offset_counts[val] = offset_counts.get(val, 0) + 1
-    candidate_offsets = [v for v, cnt in offset_counts.items() if cnt >= 3 and v > 256]
-    if not candidate_offsets:
+    values = list(struct.unpack_from("<64I", header, 0))
+    counts: dict = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    candidates = [
+        value for value, count in counts.items() if count >= 3 and value > 256
+    ]
+    if not candidates:
         return None
-    highest_offset = max(candidate_offsets)
-    bytes_to_end = full_size - highest_offset
+    highest = max(candidates)
+    tail = full_size - highest
     last_size = 0
-    for val in ints:
-        if val % 4 != 0 or abs(bytes_to_end - val) > 4:
-            continue
-        last_size = val
-        break
+    for value in values:
+        if value % 4 == 0 and abs(tail - value) <= 4:
+            last_size = value
+            break
     if last_size == 0:
         return None
-    pairs = [(highest_offset, last_size), (highest_offset, 0), (highest_offset, 0)]
-    offsets_left = 28
-    current_offset = highest_offset
-    for _ in range(28):
-        found = False
-        for i in range(len(ints)):
-            if ints[i] <= 0 or ints[i] % 4 != 0:
+    pairs: List[Tuple[int, int]] = [(highest, last_size), (highest, 0), (highest, 0)]
+    left = SECTION_SLOTS
+    current = highest
+    for _ in range(SECTION_SLOTS):
+        matched = False
+        for i in range(len(values)):
+            if values[i] <= 0 or values[i] % 4 != 0:
                 continue
-            for j in range(len(ints)):
-                if ints[j] <= 0:
+            for j in range(len(values)):
+                if values[j] <= 0:
                     continue
-                prev_offset = ints[j]
-                prev_size = ints[i]
+                prev_offset, prev_size = values[j], values[i]
                 if len(pairs) in (25, 28, 29, 30):
-                    prev_offset, prev_size = min(prev_offset, prev_size), max(
-                        prev_offset, prev_size
+                    prev_offset, prev_size = (
+                        min(prev_offset, prev_size),
+                        max(prev_offset, prev_size),
                     )
                 else:
-                    prev_offset, prev_size = max(prev_offset, prev_size), min(
-                        prev_offset, prev_size
+                    prev_offset, prev_size = (
+                        max(prev_offset, prev_size),
+                        min(prev_offset, prev_size),
                     )
-                delta = current_offset - prev_offset
-                if abs(prev_size - delta) <= 4:
+                if abs(prev_size - (current - prev_offset)) <= 4:
                     pairs.append((prev_offset, prev_size))
-                    current_offset = prev_offset
-                    offsets_left -= 1
-                    ints[i] = 0
-                    ints[j] = 0
-                    found = True
+                    current = prev_offset
+                    left -= 1
+                    values[i] = 0
+                    values[j] = 0
+                    matched = True
                     break
-            if found:
+            if matched:
                 break
-        if not found:
+        if not matched:
             break
-    if offsets_left != 0:
+    if left != 0:
         return None
-    pairs.reverse()
-    offsets = [pair[0] for pair in pairs[:29]]
-    if len(offsets) != 29 or any(off == 0 for off in offsets):
+    offsets = sorted({offset for offset, _ in pairs})
+    if len(offsets) != SECTION_SLOTS + 1 or offsets[0] == 0:
         return None
     return offsets
 
 
-def token_cb_at(index, prefix):
-    return lambda entries: bool(entries) and all(
-        (entry[index] & 0xFF000000) == prefix for entry in entries
+def build_reconstructed_metadata(metadata: bytes, offsets: Sequence[int]) -> bytes:
+    found = list(offsets)
+    lookup = sorted(found)
+    header = bytearray(
+        METADATA_HEADER_MAGIC
+        + METADATA_VERSION_STUB
+        + METADATA_DATA_OFFSET_STUB
+        + b"\x00" * (METADATA_HEADER_SIZE - 12)
     )
+    body = bytearray()
+    position = 0
+
+    def add(size: int) -> None:
+        nonlocal position
+        if len(header) < 20 + position:
+            return
+        struct.pack_into("<I", header, 12 + position, size)
+        total = struct.unpack_from("<I", header, 8 + position)[0] + size
+        struct.pack_into("<I", header, 16 + position, total)
+        position += 8
+
+    for offset in found[:SECTION_SLOTS]:
+        index = lookup.index(offset)
+        size = (
+            lookup[index + 1] - offset
+            if index + 1 < len(lookup)
+            else len(metadata) - offset
+        )
+        add(size)
+        body += metadata[offset : offset + size]
+    for _ in range(SECTION_SLOTS - len(found[:SECTION_SLOTS])):
+        add(0)
+    add(0)
+    add(0)
+    if len(found) > SECTION_SLOTS:
+        last = found[SECTION_SLOTS]
+        last_size = len(metadata) - last
+        struct.pack_into("<I", header, 252, last_size)
+        body += metadata[last : last + last_size]
+    return bytes(header + body)
 
 
 def decrypt_metadata(
@@ -833,587 +1286,265 @@ def decrypt_metadata(
 ) -> bool:
     log_info(f"Decrypting metadata to: {output_path}")
     try:
-        print(f"{COLOR_SUCCESS}Starting metadata decryption...{Style.RESET_ALL}")
-        if not skip_decrypt:
+        print(paint(i18n.get("starting_decrypt"), COLOR_SUCCESS))
+        if skip_decrypt:
+            print(paint(i18n.get("skipping_decryption"), COLOR_PRIMARY))
+        else:
             metadata, key = try_decrypt_metadata(metadata)
             if key:
-                print(f"{COLOR_SUCCESS}Auto-decrypted: {key}{Style.RESET_ALL}")
+                print(paint(i18n.get("auto_decrypted").format(key=key), COLOR_SUCCESS))
             else:
-                print(
-                    f"{COLOR_PRIMARY}Metadata is not encrypted or uses unknown encryption{Style.RESET_ALL}"
-                )
-        else:
-            print(f"{COLOR_PRIMARY}Skipping auto-decryption.{Style.RESET_ALL}")
+                print(paint(i18n.get("metadata_unencrypted"), COLOR_PRIMARY))
         version, desc = get_metadata_version(metadata)
-        print(f"{COLOR_PRIMARY}Metadata version: {version} ({desc}){Style.RESET_ALL}")
-        if version < 15 or version > 43:
+        print(
+            paint(
+                i18n.get("metadata_version").format(version=version, desc=desc),
+                COLOR_PRIMARY,
+            )
+        )
+        if version < 15 or version > max(SUPPORTED_VERSIONS):
             print(
-                f"{COLOR_WARNING}Warning: Unknown metadata version {version}{Style.RESET_ALL}"
+                paint(
+                    i18n.get("version_unknown").format(version=version), COLOR_WARNING
+                )
             )
         elif version > 38:
             print(
-                f"{COLOR_WARNING}Warning: Version {version} may have limited support{Style.RESET_ALL}"
+                paint(
+                    i18n.get("version_limited").format(version=version), COLOR_WARNING
+                )
             )
-        if len(metadata) < 256:
-            print(
-                f"{COLOR_ERROR}{i18n.get('error')}Metadata is too small to contain a header{Style.RESET_ALL}"
-            )
+        if len(metadata) < METADATA_HEADER_SIZE:
+            print(paint(i18n.get("metadata_too_small"), COLOR_ERROR))
             log_error("Metadata too small for header parsing")
             return False
-        debug_path = os.path.join(script_dir, "debug-metadata.bin")
-        with open(debug_path, "wb") as f:
-            f.write(metadata)
-        print(f"{COLOR_PRIMARY}Debug dump saved to {debug_path}{Style.RESET_ALL}")
+        if dump_debug:
+            try:
+                with open(DUMP_FILE, "wb") as handle:
+                    handle.write(metadata)
+                print(
+                    paint(i18n.get("debug_dump").format(path=DUMP_FILE), COLOR_PRIMARY)
+                )
+            except (IOError, OSError) as error:
+                print(paint(i18n.get("dump_failed").format(error=error), COLOR_WARNING))
         offset_candidates = find_offset_candidates(metadata)
         print(
-            f"{COLOR_PRIMARY}Found {len(offset_candidates)} offset candidates{Style.RESET_ALL}"
+            paint(
+                i18n.get("offset_candidates").format(count=len(offset_candidates)),
+                COLOR_PRIMARY,
+            )
         )
         if exclude_offsets:
             for excluded in exclude_offsets.replace(" ", "").split(","):
                 if not excluded:
                     continue
                 try:
-                    todelete = int(excluded)
-                    offset_candidates.remove(todelete)
-                    print(f"{COLOR_PRIMARY}Excluded offset {todelete}{Style.RESET_ALL}")
-                except (ValueError, KeyError):
+                    offset_candidates.remove(int(excluded))
                     print(
-                        f"{COLOR_WARNING}Offset {excluded} not found in candidates{Style.RESET_ALL}"
+                        paint(
+                            i18n.get("excluded_offset").format(value=excluded),
+                            COLOR_PRIMARY,
+                        )
                     )
-
-        only_sizes = [
-            x
-            for x in [
-                struct.unpack("<I", metadata[i : i + 4])[0] for i in range(0, 256, 4)
-            ]
-            if x not in offset_candidates
-        ]
-
-        offsets_to_sizes: List[Tuple[int, int]] = []
-        for possible_offset in offset_candidates:
-            found = False
-            size_search_pool = (
-                only_sizes
-                if possible_offset != 256
-                else [
-                    struct.unpack("<I", metadata[i : i + 4])[0]
-                    for i in range(0, 256, 4)
-                ]
-            )
-            for size in size_search_pool:
-                if size != possible_offset and size != 0 and size < len(metadata) / 3:
-                    if size + possible_offset == len(metadata):
-                        offsets_to_sizes.append((possible_offset, size))
-                        found = True
-                        break
-                    for next_offset in offset_candidates:
-                        if (
-                            possible_offset + size == next_offset
-                            and possible_offset != next_offset
-                        ):
-                            offsets_to_sizes.append((possible_offset, size))
-                            found = True
-                            break
-                if found:
-                    break
-            if not found:
-                is_256 = possible_offset == 256
-                is_big_enough = possible_offset > len(metadata) / 3
-                next_offset = None
-                try:
-                    idx = offset_candidates.index(possible_offset)
-                    if idx + 1 < len(offset_candidates):
-                        next_offset = offset_candidates[idx + 1]
                 except ValueError:
-                    pass
-                is_size_big_enough = (next_offset is not None) and (
-                    next_offset - possible_offset > 4096
-                )
-                did_last_add_up = False
-                if offsets_to_sizes:
-                    last_pair_sum = sum(offsets_to_sizes[-1])
-                    did_last_add_up = last_pair_sum == possible_offset
-                if (is_256 or is_big_enough or is_size_big_enough) and (
-                    did_last_add_up or is_256 or not offsets_to_sizes
-                ):
-                    size = (
-                        (next_offset - possible_offset)
-                        if next_offset
-                        else len(metadata) - possible_offset
-                    )
-                    offsets_to_sizes.append((possible_offset, size))
                     print(
-                        f"{COLOR_PRIMARY}{i18n.get('approx_offset_added')}: {possible_offset}, size={size}{Style.RESET_ALL}"
+                        paint(
+                            i18n.get("offset_not_candidate").format(value=excluded),
+                            COLOR_WARNING,
+                        )
                     )
-                else:
-                    only_sizes.append(possible_offset)
-
-        offsets_to_sizes = sorted(offsets_to_sizes, key=lambda x: x[0])
+        pairs = build_offsets_to_sizes(metadata, offset_candidates)
         print(
-            f"{COLOR_PRIMARY}{i18n.get('validated_pairs')}{len(offsets_to_sizes)}{i18n.get('offset_size_pairs')}{Style.RESET_ALL}"
-        )
-        reconstructed = bytearray(
-            METADATA_HEADER_MAGIC + b"\x1f\x00\x00\x00\x00\x01\x00\x00" + b"\x00" * 244
-        )
-        reconstructed_offsets = []
-
-        def string_literal_cb(e):
-            return (
-                all(
-                    e[i][1] == (e[0][1] + sum(x[0] for x in e[:i]))
-                    for i in range(1, len(e))
-                )
-                if e
-                else True
+            paint(
+                i18n.get("validated_pairs")
+                + str(len(pairs))
+                + i18n.get("offset_size_pairs"),
+                COLOR_PRIMARY,
             )
-
-        def events_cb(e):
-            if not e:
-                return True
-            wrong = 0
-            last_name_index = e[0][0]
-            for name_index, _, add, remove, _, _ in e:
-                if name_index < last_name_index:
-                    wrong += 1
-                    if wrong > 256:
-                        return False
-                if add > 1024 or remove > 1024:
-                    return False
-                last_name_index = name_index
-            return True
-
-        def ascending_cb(e):
-            return all(e[i][0] <= e[i + 1][0] for i in range(len(e) - 1)) if e else True
-
-        def nestedTypes_cb(e):
-            if not e:
-                return False
-            right_count, last_index, attempts = 0, 0, 0
-            for idx in e:
-                attempts += 1
-                if idx > last_index:
-                    right_count += 1
-                else:
-                    right_count -= 1
-                if right_count > 256:
-                    return True
-                if right_count < -4 or idx > 0x01000000 or attempts > 512:
-                    return False
-                last_index = idx
-            return True
-
-        def interfaces_cb(e):
-            for val in e:
-                if 1024576 < val or val < 256:
-                    return False
-            return True
-
-        def vtableMethods_cb(e):
-            for val in e:
-                if val != 1 and val & 0xE0000000 == 0:
-                    return False
-            return True
-
-        def interfaceOffsets_cb(e):
-            for type_idx, off in e:
-                if off > 256 or 256 > type_idx or type_idx > 65535:
-                    return False
-            return True
-
-        def typeDefinitions_cb(e):
-            for entry in e:
-                if entry[25] & 0xFF000000 != 0x02000000:
-                    return False
-            return True
-
-        def images_cb(e):
-            if len(e) < 2:
-                return False
-            for entry in e[:-2]:
-                if entry[7] != 1:
-                    return False
-            return True
-
-        def fieldRefs_cb(e):
-            for type_idx, field_idx in e:
-                if type_idx < 256 or field_idx > 2048:
-                    return False
-            return True
-
-        def referencedAssemblies_cb(e):
-            if not e:
-                return True
-            mean = sum(e) / len(e)
-            for val in e:
-                if val > 256 or not 30 < mean < 40:
-                    return False
-            return True
-
-        def attributeDataRange_cb(e):
-            right = 0
-            last_idx = e[0][1] if e else 0
-            if last_idx != 0:
-                return False
-            for token, idx in e:
-                if token & 0xFF000000 == 0:
-                    right -= 10
-                else:
-                    right += 2
-                if idx < last_idx:
-                    right -= 2
-                else:
-                    right += 1
-                if right > 2048:
-                    return True
-                elif right < -16:
-                    return False
-            return True
-
-        def unresolvedIndirectCallParameterTypes_cb(e):
-            for val in e:
-                if val < 256 or val > 70000:
-                    return False
-            return True
-
-        def unresolvedIndirectCallParameterTypeRanges_cb(e):
-            expected = e[0][0] if e else 0
-            for start, length in e:
-                if start != expected:
-                    return False
-                expected += length
-            return True
-
-        def exportedTypeDefinitions_cb(e):
-            for val in e:
-                if val < 64 or val > 131072:
-                    return False
-            return True
-
-        def genericParameters_cb(e):
-            expected_constraints_start = e[0][2] if e else 0
-            for _, name_idx, constraints_start, constraints_count, _, _ in e:
-                if (
-                    constraints_start not in (0, expected_constraints_start)
-                    or name_idx < 256
-                ):
-                    return False
-                expected_constraints_start += constraints_count
-            return True
-
-        def genericParameterConstraints_cb(e):
-            for constraint in e:
-                if 1024576 < constraint or constraint < 256:
-                    return False
-            return True
-
-        def genericContainers_cb(e):
-            for _, type_argc, is_method, _ in e:
-                if is_method not in (0, 1) or type_argc > 128:
-                    return False
-            return True
-
-        heuristics = [
-            ("stringLiteral", string_literal_cb, "<II", True, None),
-            (
-                "stringLiteralData",
-                None,
-                None,
-                True,
-                b"\x00\x00\x00\x00\x01\x09\x00\x00\x01",
-            ),
-            ("string", None, None, True, b"Assembly-CSharp\x00\x00\x00\x00\x00Assembl"),
-            ("events", events_cb, "<IIIIII", False, None),
-            ("properties", token_cb_at(4, 0x17000000), "<IIIII", False, None),
-            ("methods", token_cb_at(6, 0x06000000), "<IIIIIIIHHHH", False, None),
-            ("parameterDefaultValues", ascending_cb, "<III", True, None),
-            ("fieldDefaultValues", ascending_cb, "<III", False, None),
-            (
-                "fieldAndParameterDefaultValuesData",
-                None,
-                None,
-                False,
-                b"\\Assets\\ThirdParty\\I2\\Localization",
-            ),
-            ("fieldMarshaledSizes", ascending_cb, "<III", True, None),
-            ("parameters", token_cb_at(1, 0x08000000), "<III", True, None),
-            ("fields", token_cb_at(2, 0x04000000), "<III", True, None),
-            ("genericParameters", genericParameters_cb, "<IIHHHH", True, None),
-            (
-                "genericParameterConstraints",
-                genericParameterConstraints_cb,
-                "<I",
-                True,
-                None,
-            ),
-            ("genericContainers", genericContainers_cb, "<IIII", False, None),
-            ("nestedTypes", nestedTypes_cb, "<I", False, None),
-            ("interfaces", interfaces_cb, "<I", False, None),
-            ("vtableMethods", vtableMethods_cb, "<I", False, None),
-            ("interfaceOffsets", interfaceOffsets_cb, "<II", False, None),
-            (
-                "typeDefinitions",
-                typeDefinitions_cb,
-                "<IIIIIIIIIIIIIIIIHHHHHHHHII",
-                False,
-                None,
-            ),
-            ("images", images_cb, "<IIIIIIIIII", False, None),
-            (
-                "assemblies",
-                token_cb_at(1, 0x20000000),
-                "<IIIIIIIIIIIIIIII",
-                False,
-                None,
-            ),
-            ("fieldRefs", fieldRefs_cb, "<II", False, None),
-            ("referencedAssemblies", referencedAssemblies_cb, "<I", False, None),
-            ("attributeData", None, None, False, b"NewFragmentBox"),
-            ("attributeDataRange", attributeDataRange_cb, "<II", False, None),
-            (
-                "unresolvedIndirectCallParameterTypes",
-                unresolvedIndirectCallParameterTypes_cb,
-                "<I",
-                False,
-                None,
-            ),
-            (
-                "unresolvedIndirectCallParameterTypeRanges",
-                unresolvedIndirectCallParameterTypeRanges_cb,
-                "<II",
-                False,
-                None,
-            ),
-            ("exportedTypeDefinitions", exportedTypeDefinitions_cb, "<I", False, None),
-        ]
-        for h_name, h_cb, h_sig, h_pref, h_marker in tqdm(
-            heuristics, desc="Applying heuristics", colour="green"
-        ):
-            result, offsets_to_sizes = apply_heuristic(
-                h_name, offsets_to_sizes, metadata, h_cb, h_sig, h_pref, h_marker
-            )
+        )
+        reconstructed_offsets: List[int] = []
+        progress = tqdm(
+            get_heuristics(),
+            desc="heuristics",
+            colour="green",
+            unit="section",
+            leave=False,
+        )
+        for spec in progress:
+            progress.set_description(spec[0])
+            result, pairs = apply_heuristic(spec, metadata, pairs)
             if result:
                 reconstructed_offsets.append(result[0])
-
-        if len(reconstructed_offsets) < 29:
+        if len(reconstructed_offsets) < SECTION_SLOTS + 1:
             print(
-                f"{COLOR_WARNING}{i18n.get('heuristics_insufficient')} {len(reconstructed_offsets)} {i18n.get('trying_unshuffle')}{Style.RESET_ALL}"
+                paint(
+                    i18n.get("heuristics_insufficient")
+                    + f" {len(reconstructed_offsets)} "
+                    + i18n.get("trying_unshuffle"),
+                    COLOR_WARNING,
+                )
             )
-            unshuffled = unshuffle_metadata_header(metadata[:256], len(metadata))
+            unshuffled = unshuffle_metadata_header(
+                metadata[:METADATA_HEADER_SIZE], len(metadata)
+            )
             if unshuffled:
                 reconstructed_offsets = unshuffled
-                print(
-                    f"{COLOR_SUCCESS}{i18n.get('unshuffle_success')}{Style.RESET_ALL}"
-                )
+                print(paint(i18n.get("unshuffle_success"), COLOR_SUCCESS))
             else:
-                print(f"{COLOR_WARNING}{i18n.get('unshuffle_failed')}{Style.RESET_ALL}")
-
-        if len(reconstructed_offsets) < 29:
+                print(paint(i18n.get("unshuffle_failed"), COLOR_WARNING))
+        if len(reconstructed_offsets) < SECTION_SLOTS + 1:
             print(
-                f"{COLOR_WARNING}{i18n.get('warning_sections')}{len(reconstructed_offsets)}{i18n.get('expected_sections')}{Style.RESET_ALL}"
+                paint(
+                    i18n.get("warning_sections")
+                    + f" {len(reconstructed_offsets)} "
+                    + i18n.get("expected_sections"),
+                    COLOR_WARNING,
+                )
             )
-
-        pos = 0
-
-        def add_header_size(size):
-            nonlocal pos
-            if len(reconstructed) >= 20 + pos:
-                reconstructed[12 + pos : 16 + pos] = struct.pack("<I", size)
-                new_total = (
-                    struct.unpack("<I", reconstructed[8 + pos : 12 + pos])[0] + size
-                )
-                reconstructed[16 + pos : 20 + pos] = struct.pack("<I", new_total)
-                pos += 8
-
-        offset_lookup = sorted(reconstructed_offsets)
-        first_sections = reconstructed_offsets[:28]
-        for offset in first_sections:
-            try:
-                idx = offset_lookup.index(offset)
-                size = (
-                    offset_lookup[idx + 1] - offset
-                    if idx + 1 < len(offset_lookup)
-                    else len(metadata) - offset
-                )
-            except (ValueError, IndexError):
-                size = len(metadata) - offset
-            add_header_size(size)
-            reconstructed += metadata[offset : offset + size]
-
-        for _ in range(28 - len(first_sections)):
-            add_header_size(0)
-
-        add_header_size(0)
-        add_header_size(0)
-
-        if len(reconstructed_offsets) > 28:
-            last_offset = reconstructed_offsets[28]
-            last_size = len(metadata) - last_offset
-            reconstructed[252:256] = struct.pack("<I", last_size)
-            reconstructed += metadata[last_offset : last_offset + last_size]
-
-        if os.path.isdir(output_path):
-            output_path = os.path.join(output_path, "output-metadata.dat")
-        with open(output_path, "wb") as f:
-            f.write(reconstructed)
+        reconstructed = build_reconstructed_metadata(metadata, reconstructed_offsets)
+        written = write_output(reconstructed, output_path, RECONSTRUCTED_NAME)
+        print(paint(i18n.get("output") + written, COLOR_ACCENT, True))
         print(
-            f"{COLOR_ACCENT + Style.BRIGHT}{i18n.get('output')}: {output_path}{Style.RESET_ALL}"
+            paint(
+                i18n.get("output_size").format(size=len(reconstructed)),
+                COLOR_PRIMARY,
+            )
         )
-        print(f"{COLOR_SUCCESS}{i18n.get('decrypt_success')}{Style.RESET_ALL}")
-        log_info(f"Decrypted to {output_path}")
+        print(paint(i18n.get("decrypt_success"), COLOR_SUCCESS))
+        log_info(f"Decrypted to {written}, {len(reconstructed)} bytes")
         return True
-    except (IOError, OSError, struct.error) as e:
-        print(f"{COLOR_ERROR}{i18n.get('error')}{e}{Style.RESET_ALL}")
-        log_error(f"Decrypt error: {e}")
+    except (IOError, OSError, struct.error, ValueError, IndexError) as error:
+        print(paint(f"{i18n.get('error')}{error}", COLOR_ERROR))
+        log_error(f"Decrypt error: {error}")
         return False
 
 
-def print_menu():
-    if not Style:
-        return
+def show_metadata_info(path: str) -> None:
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(PROBE_SIZE)
+        box_top()
+        box_title(i18n.get("metadata_info_title"))
+        print(f"{i18n.get('magic')}{data[:4].hex().upper()}")
+        version, desc = get_metadata_version(data)
+        print(f"{i18n.get('version')}{version} ({desc})")
+        print(f"{i18n.get('file_size')}{os.path.getsize(path)} bytes")
+        if data[:4] != METADATA_MAGIC:
+            print(paint(i18n.get("warning_invalid_magic"), COLOR_WARNING))
+        _, key = try_decrypt_metadata(data)
+        if key:
+            print(paint(i18n.get("possible_encryption") + key, COLOR_SUCCESS))
+    except (IOError, OSError) as error:
+        print(paint(f"{i18n.get('error')}{error}", COLOR_ERROR))
+        log_error(f"Info error: {error}")
+
+
+def print_menu() -> None:
     print()
-    print(f"{COLOR_PRIMARY}┌{'─'*62}┐{Style.RESET_ALL}")
-    print(
-        f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {COLOR_SUCCESS}1{Style.RESET_ALL}. {i18n.get('menu_extract'): <57}{COLOR_PRIMARY}│{Style.RESET_ALL}"
+    print(paint(f"┌{'─' * MENU_WIDTH}┐", COLOR_PRIMARY))
+    items = (
+        (COLOR_SUCCESS, "1", i18n.get("menu_extract")),
+        (COLOR_SUCCESS, "2", i18n.get("menu_decrypt")),
+        (COLOR_SUCCESS, "3", i18n.get("menu_info")),
+        (COLOR_WARNING, "4", i18n.get("menu_switch_lang")),
+        (COLOR_ERROR, "0", i18n.get("menu_exit")),
     )
-    print(
-        f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {COLOR_SUCCESS}2{Style.RESET_ALL}. {i18n.get('menu_decrypt'): <57}{COLOR_PRIMARY}│{Style.RESET_ALL}"
-    )
-    print(
-        f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {COLOR_SUCCESS}3{Style.RESET_ALL}. {i18n.get('menu_info'): <57}{COLOR_PRIMARY}│{Style.RESET_ALL}"
-    )
-    print(
-        f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {COLOR_WARNING}4{Style.RESET_ALL}. {i18n.get('menu_switch_lang'): <57}{COLOR_PRIMARY}│{Style.RESET_ALL}"
-    )
-    print(
-        f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {COLOR_ERROR}0{Style.RESET_ALL}. {i18n.get('menu_exit'): <57}{COLOR_PRIMARY}│{Style.RESET_ALL}"
-    )
-    print(f"{COLOR_PRIMARY}└{'─'*62}┘{Style.RESET_ALL}")
+    for color, key, label in items:
+        line = f"  {key}. {label}"[:MENU_WIDTH].ljust(MENU_WIDTH)
+        line = line.replace(key, f"{color}{key}{Style.RESET_ALL}", 1)
+        print(paint(f"│{line}│", COLOR_PRIMARY))
+    print(paint(f"└{'─' * MENU_WIDTH}┘", COLOR_PRIMARY))
 
 
-def menu_extract():
+def menu_extract() -> None:
     clear_screen()
-    print(f"\n{COLOR_PRIMARY}┌{'─'*58}┐{Style.RESET_ALL}")
-    print(
-        f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {i18n.get('extract_title'):^56}{COLOR_PRIMARY}│{Style.RESET_ALL}"
-    )
-    print(f"{COLOR_PRIMARY}└{'─'*58}┘{Style.RESET_ALL}")
+    box_top()
+    box_title(i18n.get("extract_title"))
     libunity = select_file(
         i18n.get("select_libunity"), [("SO files", ".so"), ("All files", ".*")]
     )
     if not libunity:
-        print(f"{COLOR_ERROR}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
+        print(paint(i18n.get("no_file_selected"), COLOR_ERROR))
         return
     print(f"{i18n.get('libunity')}{libunity}")
     output = select_save_file(
-        i18n.get("save_metadata"), [("DAT files", ".dat"), ("All files", ".*")], ".dat"
+        i18n.get("save_metadata"),
+        [("DAT files", ".dat"), ("All files", ".*")],
+        ".dat",
     )
     if not output:
-        print(f"{COLOR_ERROR}{i18n.get('no_output_path')}{Style.RESET_ALL}")
+        print(paint(i18n.get("no_output_path"), COLOR_ERROR))
         return
+    entered = prompt(i18n.get("max_size"))
     try:
-        size = input(i18n.get("max_size")).strip()
-        size = int(size) if size else 30_000_000
-    except (EOFError, ValueError, KeyboardInterrupt):
-        size = 30_000_000
+        size = int(entered) if entered else DEFAULT_MAX_SIZE
+    except ValueError:
+        size = DEFAULT_MAX_SIZE
     result = extract_metadata(libunity, size)
-    if result:
-        metadata, _ = result
-        with open(output, "wb") as f:
-            f.write(metadata)
-        print(f"{COLOR_SUCCESS}{i18n.get('extracted_to')}{output}{Style.RESET_ALL}")
+    if not result:
+        return
+    metadata, _ = result
+    try:
+        written = write_output(metadata, output, EXTRACTED_NAME)
+        print(paint(i18n.get("extracted_to") + written, COLOR_SUCCESS))
+    except (IOError, OSError) as error:
+        print(paint(f"{i18n.get('error')}{error}", COLOR_ERROR))
+        log_error(f"Write error: {error}")
 
 
-def menu_decrypt():
+def menu_decrypt() -> None:
     clear_screen()
-    print(f"\n{COLOR_PRIMARY}┌{'─'*58}┐{Style.RESET_ALL}")
-    print(
-        f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {i18n.get('decrypt_title'):^56}{COLOR_PRIMARY}│{Style.RESET_ALL}"
-    )
-    print(f"{COLOR_PRIMARY}└{'─'*58}┘{Style.RESET_ALL}")
+    box_top()
+    box_title(i18n.get("decrypt_title"))
     input_file = select_file(
         i18n.get("select_encrypted"), [("DAT files", ".dat"), ("All files", ".*")]
     )
     if not input_file:
-        print(f"{COLOR_ERROR}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
+        print(paint(i18n.get("no_file_selected"), COLOR_ERROR))
         return
     print(f"{i18n.get('input')}{input_file}")
     output = select_save_file(
-        i18n.get("save_decrypted"), [("DAT files", ".dat"), ("All files", ".*")], ".dat"
+        i18n.get("save_decrypted"),
+        [("DAT files", ".dat"), ("All files", ".*")],
+        ".dat",
     )
     if not output:
-        print(f"{COLOR_ERROR}{i18n.get('no_output_path')}{Style.RESET_ALL}")
+        print(paint(i18n.get("no_output_path"), COLOR_ERROR))
         return
+    exclude = prompt(i18n.get("exclude_offsets_prompt")) or None
+    skip = (prompt(i18n.get("skip_decrypt_prompt")) or "").lower() in ("y", "yes")
     try:
-        exclude = input(i18n.get("exclude_offsets_prompt")).strip() or None
-    except (EOFError, KeyboardInterrupt):
-        exclude = None
-    try:
-        skip = input(i18n.get("skip_decrypt_prompt")).strip().lower() == "y"
-    except (EOFError, KeyboardInterrupt):
-        skip = False
-    try:
-        with open(input_file, "rb") as f:
-            metadata = f.read()
-        decrypt_metadata(metadata, output, exclude, skip_decrypt=skip)
-    except KeyboardInterrupt:
-        print(f"\n{COLOR_WARNING}{i18n.get('exiting')}{Style.RESET_ALL}")
-    except Exception as e:
-        print(f"{COLOR_ERROR}{i18n.get('error')}{e}{Style.RESET_ALL}")
+        with open(input_file, "rb") as handle:
+            metadata = handle.read()
+    except (IOError, OSError) as error:
+        print(paint(f"{i18n.get('error')}{error}", COLOR_ERROR))
+        log_error(f"Read error: {error}")
+        return
+    decrypt_metadata(metadata, output, exclude, skip_decrypt=skip)
 
 
-def menu_info():
+def menu_info() -> None:
     clear_screen()
-    print(f"\n{COLOR_PRIMARY}┌{'─'*58}┐{Style.RESET_ALL}")
-    print(
-        f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {i18n.get('info_title'):^56}{COLOR_PRIMARY}│{Style.RESET_ALL}"
-    )
-    print(f"{COLOR_PRIMARY}└{'─'*58}┘{Style.RESET_ALL}")
+    box_top()
+    box_title(i18n.get("info_title"))
     input_file = select_file(
         i18n.get("select_metadata"), [("DAT files", ".dat"), ("All files", ".*")]
     )
     if not input_file:
-        print(f"{COLOR_ERROR}{i18n.get('no_file_selected')}{Style.RESET_ALL}")
+        print(paint(i18n.get("no_file_selected"), COLOR_ERROR))
         return
     print(f"{i18n.get('file')}{input_file}")
-    try:
-        with open(input_file, "rb") as f:
-            data = f.read(512)
-        print(f"\n{COLOR_PRIMARY}┌{'─'*58}┐{Style.RESET_ALL}")
-        print(
-            f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {i18n.get('metadata_info_title'):^56}{COLOR_PRIMARY}│{Style.RESET_ALL}"
-        )
-        print(f"{COLOR_PRIMARY}└{'─'*58}┘{Style.RESET_ALL}")
-        print(f"{i18n.get('magic')}{data[:4].hex().upper()}")
-        version, desc = get_metadata_version(data)
-        print(f"{i18n.get('version')}{version} ({desc})")
-        print(f"{i18n.get('file_size')}{os.path.getsize(input_file)} bytes")
-        if data[:4] != METADATA_MAGIC:
-            print(
-                f"{COLOR_WARNING}{i18n.get('warning_invalid_magic')}{Style.RESET_ALL}"
-            )
-        decrypted, key = try_decrypt_metadata(data)
-        if key:
-            print(
-                f"{COLOR_SUCCESS}{i18n.get('possible_encryption')}{key}{Style.RESET_ALL}"
-            )
-    except Exception as e:
-        print(f"{COLOR_ERROR}{i18n.get('error')}{e}{Style.RESET_ALL}")
+    show_metadata_info(input_file)
 
 
-def interactive_menu():
+def interactive_menu() -> None:
     clear_screen()
-    if Style:
-        print(COLOR_PRIMARY + i18n.BANNER + Style.RESET_ALL)
-    else:
-        print(i18n.BANNER)
+    print(paint(i18n.BANNER, COLOR_PRIMARY))
     while True:
         print_menu()
-        try:
-            choice = input(
-                f"{COLOR_PRIMARY}{i18n.get('select_option')}{Style.RESET_ALL}: "
-            ).strip()
-        except (EOFError, KeyboardInterrupt):
-            print(f"\n{COLOR_SUCCESS}{i18n.get('exiting')}{Style.RESET_ALL}")
+        choice = prompt(f"{i18n.get('select_option')}: ")
+        if choice is None:
+            print(paint(i18n.get("exiting"), COLOR_SUCCESS))
             break
         if choice == "1":
             menu_extract()
@@ -1422,138 +1553,158 @@ def interactive_menu():
         elif choice == "3":
             menu_info()
         elif choice == "4":
-            lang = i18n.toggle_language()
-            config["language"] = lang
+            config["language"] = i18n.toggle_language()
             save_config()
             print(
-                f"{COLOR_SUCCESS}{i18n.get('lang_changed')}{lang.upper()}{Style.RESET_ALL}"
+                paint(
+                    i18n.get("lang_changed") + config["language"].upper(), COLOR_SUCCESS
+                )
             )
         elif choice == "0":
-            print(f"{COLOR_SUCCESS}{i18n.get('exiting')}{Style.RESET_ALL}")
+            print(paint(i18n.get("exiting"), COLOR_SUCCESS))
             log_info("Application exited")
             break
         else:
-            print(f"{COLOR_ERROR}{i18n.get('invalid_option')}{Style.RESET_ALL}")
-        try:
-            input(f"\n{COLOR_PRIMARY}{i18n.get('press_enter')}{Style.RESET_ALL}")
-        except (EOFError, KeyboardInterrupt):
+            print(paint(i18n.get("invalid_option"), COLOR_ERROR))
+        if prompt(f"\n{i18n.get('press_enter')}") is None:
             break
         clear_screen()
-        if Style:
-            print(COLOR_PRIMARY + i18n.BANNER + Style.RESET_ALL)
-        else:
-            print(i18n.BANNER)
+        print(paint(i18n.BANNER, COLOR_PRIMARY))
+    log_info("Application exited")
 
 
-def main():
-    global Style, tqdm, ELFTOOLS_AVAILABLE
-    if sys.stdout and hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    if sys.stderr and hasattr(sys.stderr, "reconfigure"):
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+def load_dependencies() -> None:
+    global Style, tqdm, ELFTOOLS_AVAILABLE, ELFFile
+    ensure_dependency("colorama")
+    ensure_dependency("tqdm")
+    ensure_dependency("pyelftools", "elftools")
+    from colorama import Style as colorama_style
+    from colorama import init as colorama_init
+    from tqdm import tqdm as tqdm_module
+
+    Style = colorama_style
+    tqdm = tqdm_module
+    colorama_init(autoreset=False)
+    try:
+        from elftools.elf.elffile import ELFFile as elf_file_class
+
+        ELFFile = elf_file_class
+        ELFTOOLS_AVAILABLE = True
+    except ImportError:
+        ELFTOOLS_AVAILABLE = False
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="Metadata-Worker", description="IL2CPP Metadata Tool"
+        prog="Metadata-Worker",
+        description="IL2CPP Metadata Tool",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "commands:\n"
+            "  extract   pull the metadata blob out of libunity.so\n"
+            "  decrypt   rebuild a valid header for a dumped metadata blob\n"
+            "  info      show magic, version and size of a metadata file\n"
+            "  menu      interactive menu (default)\n"
+        ),
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"Metadata-Worker {VERSION}"
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
     extract_parser = subparsers.add_parser(
         "extract", help="Extract metadata from libunity.so"
     )
     extract_parser.add_argument("libunity", help="Path to libunity.so")
     extract_parser.add_argument("-o", "--output", required=True, help="Output path")
     extract_parser.add_argument(
-        "-s", "--size", type=int, default=30_000_000, help="Max extraction size"
+        "-s", "--size", type=int, default=DEFAULT_MAX_SIZE, help="Max extraction size"
     )
+
     decrypt_parser = subparsers.add_parser("decrypt", help="Decrypt extracted metadata")
     decrypt_parser.add_argument("input", help="Path to encrypted metadata")
     decrypt_parser.add_argument("-o", "--output", required=True, help="Output path")
-    decrypt_parser.add_argument("-e", "--exclude", help="Exclude offsets (e.g., 1,2,3)")
+    decrypt_parser.add_argument("-e", "--exclude", help="Exclude offsets (e.g. 1,2,3)")
     decrypt_parser.add_argument(
         "--no-decrypt",
         action="store_true",
         help="Skip auto-decryption, only heuristic reconstruction",
     )
+    decrypt_parser.add_argument(
+        "--no-dump", action="store_true", help="Do not write the debug metadata dump"
+    )
+
     info_parser = subparsers.add_parser("info", help="Show metadata info")
     info_parser.add_argument("input", help="Path to metadata file")
-    menu_parser = subparsers.add_parser("menu", help="Interactive menu mode")
-    args = parser.parse_args()
-    ensure_dependency("colorama")
-    ensure_dependency("tqdm")
-    ensure_dependency("pyelftools", "elftools")
-    from colorama import Style as _Style
-    from colorama import init as colorama_init
-    from tqdm import tqdm as _tqdm
 
-    Style = _Style
-    tqdm = _tqdm
-    try:
-        from elftools.elf.elffile import ELFFile
+    subparsers.add_parser("menu", help="Interactive menu mode")
+    return parser
 
-        globals()["ELFFile"] = ELFFile
-        ELFTOOLS_AVAILABLE = True
-    except ImportError:
-        ELFTOOLS_AVAILABLE = False
 
-    colorama_init(autoreset=True)
+def require_file(path: str) -> None:
+    if not os.path.isfile(path):
+        print(paint(f"{i18n.get('error')}{path} not found", COLOR_ERROR))
+        log_error(f"File not found: {path}")
+        sys.exit(1)
+
+
+def run_extract(args: argparse.Namespace) -> None:
+    require_file(args.libunity)
+    result = extract_metadata(args.libunity, args.size)
+    if not result:
+        sys.exit(1)
+    metadata, _ = result
+    written = write_output(metadata, args.output, EXTRACTED_NAME)
+    print(paint(i18n.get("extracted_to") + written, COLOR_SUCCESS))
+
+
+def run_decrypt(args: argparse.Namespace) -> None:
+    require_file(args.input)
+    with open(args.input, "rb") as handle:
+        metadata = handle.read()
+    if not decrypt_metadata(
+        metadata, args.output, args.exclude, skip_decrypt=args.no_decrypt
+    ):
+        sys.exit(1)
+
+
+def run_info(args: argparse.Namespace) -> None:
+    require_file(args.input)
+    show_metadata_info(args.input)
+
+
+def configure_streams() -> None:
+    for name in ("stdout", "stderr"):
+        stream: Any = getattr(sys, name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
+
+
+def main() -> None:
+    global dump_debug
+    configure_streams()
+    args = build_parser().parse_args()
+    load_dependencies()
     setup_logging()
     load_config()
     log_info(f"Application started, version {VERSION}")
-    if args.command and args.command != "menu":
-        print(COLOR_PRIMARY + i18n.BANNER + Style.RESET_ALL)
-        loading_animation()
-        if args.command == "extract":
-            if not os.path.isfile(args.libunity):
-                print(f"{COLOR_ERROR}Error: {args.libunity} not found{Style.RESET_ALL}")
-                log_error(f"File not found: {args.libunity}")
-                sys.exit(1)
-            result = extract_metadata(args.libunity, args.size)
-            if result:
-                metadata, _ = result
-                with open(args.output, "wb") as f:
-                    f.write(metadata)
-                print(
-                    f"{COLOR_SUCCESS}Metadata extracted to {args.output}{Style.RESET_ALL}"
-                )
-            else:
-                sys.exit(1)
-        elif args.command == "decrypt":
-            if not os.path.isfile(args.input):
-                print(f"{COLOR_ERROR}Error: {args.input} not found{Style.RESET_ALL}")
-                log_error(f"File not found: {args.input}")
-                sys.exit(1)
-            with open(args.input, "rb") as f:
-                metadata = f.read()
-            if not decrypt_metadata(
-                metadata, args.output, args.exclude, skip_decrypt=args.no_decrypt
-            ):
-                sys.exit(1)
-        elif args.command == "info":
-            if not os.path.isfile(args.input):
-                print(f"{COLOR_ERROR}Error: {args.input} not found{Style.RESET_ALL}")
-                log_error(f"File not found: {args.input}")
-                sys.exit(1)
-            with open(args.input, "rb") as f:
-                data = f.read(512)
-            print(f"\n{COLOR_PRIMARY}┌{'─'*58}┐{Style.RESET_ALL}")
-            print(
-                f"{COLOR_PRIMARY}│{Style.RESET_ALL}  {i18n.get('metadata_info_title'):^56}{COLOR_PRIMARY}│{Style.RESET_ALL}"
-            )
-            print(f"{COLOR_PRIMARY}└{'─'*58}┘{Style.RESET_ALL}")
-            print(f"{i18n.get('magic')}{data[:4].hex().upper()}")
-            version, desc = get_metadata_version(data)
-            print(f"{i18n.get('version')}{version} ({desc})")
-            print(f"{i18n.get('file_size')}{os.path.getsize(args.input)} bytes")
-            if data[:4] != METADATA_MAGIC:
-                print(
-                    f"{COLOR_WARNING}{i18n.get('warning_invalid_magic')}{Style.RESET_ALL}"
-                )
-            decrypted, key = try_decrypt_metadata(data)
-            if key:
-                print(
-                    f"{COLOR_SUCCESS}{i18n.get('possible_encryption')}{key}{Style.RESET_ALL}"
-                )
-        stop_loading()
-    else:
+    if not args.command or args.command == "menu":
         interactive_menu()
+        return
+    dump_debug = not getattr(args, "no_dump", False)
+    print(paint(i18n.BANNER, COLOR_PRIMARY))
+    with loading(args.command):
+        if args.command == "extract":
+            run_extract(args)
+        elif args.command == "decrypt":
+            run_decrypt(args)
+        elif args.command == "info":
+            run_info(args)
+    log_info("Command finished")
 
 
 if __name__ == "__main__":
